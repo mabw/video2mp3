@@ -62,6 +62,25 @@ def _volume_label(device: str) -> str:
     return buf.value if ok and buf.value else "U盘"
 
 
+def get_fixed_drives() -> list[str]:
+    """固定硬盘盘符列表（如 ["C:", "D:"]；非 Windows 返回空）。用于数据目录选址。"""
+    if sys.platform != "win32":
+        return []
+    import ctypes
+
+    bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+    DRIVE_FIXED = 3
+    drives: list[str] = []
+    for i in range(26):
+        if bitmask & (1 << i):
+            letter = f"{chr(65 + i)}:"
+            if ctypes.windll.kernel32.GetDriveTypeW(
+                ctypes.c_wchar_p(letter + "\\")
+            ) == DRIVE_FIXED:
+                drives.append(letter)
+    return drives
+
+
 def get_usb_root() -> Path | None:
     """当前应使用的 U 盘根目录：env 覆盖 > 唯一 removable 根 > None（0 或多块）。"""
     env = os.environ.get(ENV_USB_DIR)

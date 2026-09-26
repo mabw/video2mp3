@@ -11,7 +11,7 @@ from app.convert import convert_video
 from app.db import list_videos
 from app.douyin import download_video, extract_douyin_url
 from app.inbox import intake_file, scan_inbox
-from app.paths import Layout, asset_path
+from app.paths import Layout, asset_path, write_configured_home
 from app.ui import style
 from app.ui.usb_window import open_usb_window
 from app.usb import check_free_space, send_one, usb_uuids
@@ -99,7 +99,12 @@ class MainWindow:
         frame.pack(fill="x", padx=16, pady=(8, 16))
         self.usb_var = tk.StringVar(value="请把 U 盘插上")
         tk.Label(frame, textvariable=self.usb_var, font=style.FONT_BODY,
-                 bg=style.COLOR_BG).pack(anchor="w")
+                 bg=style.COLOR_BG).pack(side="left", anchor="w")
+        # 设置按钮：小字灰色放角落（子女用的低频操作，老人不易误触）
+        tk.Button(frame, text="设置", font=style.FONT_STATUS,
+                  fg="#888888", bd=0, bg=style.COLOR_BG,
+                  activeforeground=style.COLOR_TEXT,
+                  command=self._on_set_data_home).pack(side="right", anchor="n")
         btns = tk.Frame(frame, bg=style.COLOR_BG)
         btns.pack(fill="x", pady=(10, 0))
         self.send_btn = tk.Button(btns, text="发送到 U 盘", font=style.FONT_BUTTON,
@@ -322,6 +327,37 @@ class MainWindow:
             finally:
                 self.events.put(("refresh", None))
         threading.Thread(target=work, daemon=True).start()
+
+    def _on_set_data_home(self) -> None:
+        """设置数据存放位置（子女操作）：选目录 → 写程序旁 数据目录.txt → 重启生效。"""
+        from tkinter import filedialog
+
+        chosen = filedialog.askdirectory(initialdir=str(self.layout.root), parent=self.root,
+                                         title="选择数据存放位置")
+        if not chosen:
+            return
+        new_home = Path(chosen) / "视频管家"
+        if new_home == self.layout.root:
+            return
+        if not messagebox.askyesno(
+            "确认位置",
+            f"以后的数据（视频、音乐、收件箱）将存到：\n{new_home}\n\n"
+            "重启软件后生效；原来的文件会留在旧位置。\n确定吗？",
+            parent=self.root,
+        ):
+            return
+        try:
+            write_configured_home(new_home)
+        except OSError:
+            messagebox.showerror(
+                "保存失败",
+                "无法在软件文件夹里保存设置。\n请把整个软件文件夹复制到可以写入的位置"
+                "（如 D 盘）后再设置。", parent=self.root)
+            return
+        messagebox.showinfo(
+            "设置成功",
+            "设置已保存。\n请关闭软件，再重新打开。新位置将从空白开始。",
+            parent=self.root)
 
     def _on_manage(self) -> None:
         if self.usb_root is None:
