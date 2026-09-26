@@ -30,9 +30,51 @@ def test_build_ytdlp_args(tmp_path):
 
 def test_build_ytdlp_args_with_cookies(tmp_path):
     cookies = tmp_path / "cookies.txt"
-    args = build_ytdlp_args("https://v.douyin.com/iABc123/", tmp_path, cookies_file=cookies)
+    args = build_ytdlp_args("https://v.douyin.com/iABc123/", tmp_path,
+                            cookies_args=["--cookies", str(cookies)])
     i = args.index("--cookies")
     assert args[i + 1] == str(cookies)
+
+
+def test_resolve_cookies_prefers_file(tmp_path, monkeypatch):
+    """cookies.txt 存在时优先用文件，不做浏览器探测。"""
+    from app import douyin
+
+    cookies = tmp_path / "cookies.txt"
+    cookies.write_text("# netscape\n")
+    monkeypatch.setattr(douyin, "_probe_browser", lambda u, b: (_ for _ in ()).throw(
+        AssertionError("不应探测浏览器")))
+    memo = tmp_path / "cookies_source"
+    assert douyin._resolve_cookies_args("https://v.douyin.com/x/", cookies, memo) == \
+        ["--cookies", str(cookies)]
+    assert not memo.exists()
+
+
+def test_resolve_cookies_probes_and_memoizes(tmp_path, monkeypatch):
+    """无文件无记忆时按序探测，成功者写入记忆。"""
+    from app import douyin
+
+    memo = tmp_path / "cookies_source"
+    probed = []
+    monkeypatch.setattr(douyin, "_probe_browser",
+                        lambda u, b: probed.append(b) or b == "chrome")
+    result = douyin._resolve_cookies_args("https://v.douyin.com/x/", None, memo)
+    assert result == ["--cookies-from-browser", "chrome"]
+    assert probed == ["edge", "chrome"]  # firefox 未被尝试
+    assert memo.read_text(encoding="utf-8") == "chrome"
+    # 第二次：直接用记忆，不再探测
+    assert douyin._resolve_cookies_args("https://v.douyin.com/x/", None, memo) == \
+        ["--cookies-from-browser", "chrome"]
+
+
+def test_resolve_cookies_all_fail_returns_empty(tmp_path, monkeypatch):
+    """全部浏览器探测失败：裸跑（UI 走微信兜底）。"""
+    from app import douyin
+
+    monkeypatch.setattr(douyin, "_probe_browser", lambda u, b: False)
+    memo = tmp_path / "cookies_source"
+    assert douyin._resolve_cookies_args("https://v.douyin.com/x/", None, memo) == []
+    assert not memo.exists()
 
 
 def test_download_video_parses_print_output(monkeypatch, tmp_path):
@@ -45,7 +87,7 @@ def test_download_video_parses_print_output(monkeypatch, tmp_path):
     class FakeProc:
         stdout = f"好听的歌\n{mp4}\n"
 
-    def fake_run(cmd, check, capture_output, text=True):
+    def fake_run(cmd, check, capture_output, text=True, timeout=None):
         return FakeProc()
 
     monkeypatch.setattr(douyin.subprocess, "run", fake_run)
@@ -65,7 +107,7 @@ def test_download_video_raises_on_missing_output(monkeypatch, tmp_path):
     class FakeProc:
         stdout = "标题\n/不存在的路径/xxx.mp4\n"
 
-    def fake_run(cmd, check, capture_output, text=True):
+    def fake_run(cmd, check, capture_output, text=True, timeout=None):
         return FakeProc()
 
     monkeypatch.setattr(douyin.subprocess, "run", fake_run)

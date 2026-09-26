@@ -7,7 +7,7 @@
 ## 开发（macOS/Windows 通用）
     brew install ffmpeg yt-dlp   # mac；Windows 装 ffmpeg 并入 PATH
     uv sync
-    uv run pytest                # 34 个测试（network/gui 默认跳过）
+    uv run pytest                # 36 个测试（network/gui 默认跳过）
     uv run python -m app         # 启动界面
 
 开发调试环境变量：`VIDEO2MP3_HOME`（数据目录）、`VIDEO2MP3_USB_DIR`
@@ -30,16 +30,19 @@ Artifacts 下载 `shipinguanjia-win64`，解压即完整发行目录。
 
 装机：首次运行如遇 Defender 提示：右键 → 属性 → 解除锁定 / "仍要运行"。
 
-## 抖音 cookies（可选增强）
+## 抖音 cookies（自动 + 手动两档）
 
-抖音风控要求下载方持有新鲜 cookies（**无需登录账号**）。不配置时抖音链接
-会提示失败，走微信转发路径兜底（手机抖音 分享 → 微信发送 → 电脑另存为
-收件箱），功能不受影响。
+抖音风控要求下载方持有新鲜 cookies（**无需登录账号**）。软件自动解析来源：
 
-配置方法（子女装机时做一次）：浏览器打开 douyin.com 随便看一眼 → 用
-"Get cookies.txt LOCALLY" 等插件导出 douyin.com 的 cookies → 文件改名为
-`cookies.txt` 放到数据目录根（`C:\视频管家\cookies.txt`）。软件自动检测
-使用；若日后提示下载失败，重新导出一次覆盖即可。
+1. **自动（推荐，零配置）**：数据根无 `cookies.txt` 时，自动探测本机浏览器
+   （Edge → Chrome → Firefox，轻量模拟解析验证），可用者记住（数据根
+   `cookies_source`），失败自动清记忆重探。前提：该浏览器访问过 douyin.com
+   ——装机时用老人电脑的 Edge 打开一次抖音网页即可。
+2. **手动（后备）**：插件（如 "Get cookies.txt LOCALLY"）导出 douyin.com
+   cookies，改名 `cookies.txt` 放数据根（`C:\视频管家\`）——存在即优先。
+
+两档都失败时抖音链接提示失败，走微信兜底（手机抖音 分享 → 微信发送 →
+电脑另存为收件箱），功能不受影响。
 
 ## 老人使用（装机时教学一次）
 - 视频：微信里另存到「收件箱」（桌面放收件箱快捷方式），或直接拖进软件窗口

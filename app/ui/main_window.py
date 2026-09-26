@@ -1,4 +1,5 @@
 """主窗口：链接下载区、视频清单、U 盘状态栏、发送/整理按钮。"""
+import logging
 import queue
 import threading
 import tkinter as tk
@@ -15,6 +16,8 @@ from app.ui import style
 from app.ui.usb_window import open_usb_window
 from app.usb import check_free_space, send_one, usb_uuids
 
+logger = logging.getLogger(__name__)
+
 CLIPBOARD_POLL_MS = 2000  # 剪贴板轮询间隔
 USB_POLL_MS = 3000        # U 盘轮询间隔
 INBOX_POLL_MS = 5000      # 收件箱轮询间隔（软件常开时新存入的视频也要被发现）
@@ -28,6 +31,7 @@ class MainWindow:
         self.usb_root: Path | None = None
         self.check_vars: dict[str, tk.BooleanVar] = {}
         self._inbox_scanning = False  # 防止收件箱扫描线程重叠
+        self._handled_urls: set[str] = set()  # 已下载过的抖音链接（防剪贴板回填重复诱导）
 
         self.root = tk.Tk()
         self.root.title("视频管家")
@@ -49,6 +53,7 @@ class MainWindow:
         self.root.after(CLIPBOARD_POLL_MS, self._poll_clipboard)
         self.root.after(USB_POLL_MS, self._poll_usb)
         self.root.after(0, self._poll_inbox)  # 首轮立即扫（含启动时已在收件箱的文件）
+        self._resume_pending()  # 崩溃/强关后卡在等待中/转换中的记录重新入队
 
     # ---------- 界面构建 ----------
 
@@ -61,6 +66,10 @@ class MainWindow:
         btn = tk.Button(frame, text="下载", font=style.FONT_BUTTON,
                         bg=style.COLOR_PRIMARY, fg="white", command=self._on_download)
         btn.pack(side="left", padx=(12, 0), ipadx=24, ipady=10)
+        # 抖音提示独立标签：不与"待传 U 盘"计数互相覆盖
+        self.link_hint = tk.Label(self.root, text="", font=style.FONT_STATUS,
+                                  bg=style.COLOR_BG, fg=style.COLOR_PRIMARY)
+        self.link_hint.pack(anchor="w", padx=20)
 
     def _build_list_area(self) -> None:
         header = tk.Frame(self.root, bg=style.COLOR_BG)
@@ -142,6 +151,12 @@ class MainWindow:
 
     # ---------- 后台管线 ----------
 
+    def _resume_pending(self) -> None:
+        """崩溃/强关恢复：卡在等待中/转换中的记录重新入队转换。"""
+        for rec in list_videos(self.layout.db_path):
+            if rec.status in ("pending", "converting"):
+                self._start_conversion(rec.uuid)
+
     def _poll_inbox(self) -> None:
         """周期扫描收件箱（后台线程，防重叠）：软件常开时新另存为的视频也能被发现。"""
         if not self._inbox_scanning:
@@ -201,9 +216,10 @@ class MainWindow:
         except tk.TclError:
             text = ""
         url = extract_douyin_url(text)
-        if url and self.link_var.get().strip() != url:
+        # 已处理过的链接不再回填：避免下载完成后 2 秒内又被自动填入诱导重复点击
+        if url and url not in self._handled_urls and self.link_var.get().strip() != url:
             self.link_var.set(url)
-            self.pending_label.config(text="已检测到抖音链接，点【下载】")
+            self.link_hint.config(text="已检测到抖音链接，点【下载】")
         self.root.after(CLIPBOARD_POLL_MS, self._poll_clipboard)
 
     def _on_download(self) -> None:
@@ -211,8 +227,9 @@ class MainWindow:
         if not url:
             messagebox.showinfo("提示", "请先复制抖音链接，再点【下载】", parent=self.root)
             return
+        self._handled_urls.add(url)
         self.link_var.set("")
-        self.pending_label.config(text="正在下载，请稍候…")
+        self.link_hint.config(text="正在下载，请稍候…")
 
         def work():
             try:
@@ -220,7 +237,8 @@ class MainWindow:
                                              cookies_file=self.layout.root / "cookies.txt")
                 uid = intake_file(self.layout, path, source="douyin", title=title)
                 self.events.put(("convert", uid))
-            except Exception:  # noqa: BLE001 -- UI 边界兜底：任何失败都转成人话提示
+            except Exception:
+                logger.exception("[douyin] 下载失败: %s", url)
                 self.events.put(
                     ("error", "这个链接下载失败了。\n请在手机上把视频保存后，用微信发到电脑上"))
             finally:
@@ -286,8 +304,9 @@ class MainWindow:
                     result = send_one(Path(r.mp3_path or ""), usb_root)
                     copied += result == "copied"
                     skipped += result == "skipped"
-            except Exception as exc:  # noqa: BLE001 -- UI 边界兜底：任何失败都转成人话提示
-                self.events.put(("error", f"发送中断了：{exc}\n请重新插好 U 盘再试"))
+            except Exception:
+                logger.exception("[usb] 发送中断")
+                self.events.put(("error", "发送中断了。\n请重新插好 U 盘再试"))
             else:
                 msg = f"✅ 发送成功，共 {copied} 个"
                 if skipped:

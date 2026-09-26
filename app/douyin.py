@@ -1,4 +1,4 @@
-"""抖音入口：分享文本中的链接提取 + yt-dlp 下载。"""
+"""抖音入口：分享文本中的链接提取 + yt-dlp 下载（含 cookies 自动解析）。"""
 import re
 import subprocess
 from pathlib import Path
@@ -8,6 +8,10 @@ from app.convert import find_ytdlp
 # 覆盖 v.douyin.com 短链与 www.douyin.com 完整链接
 _DOUYIN_RE = re.compile(r"https?://(?:v\.douyin\.com|www\.douyin\.com)/[A-Za-z0-9._/-]+")
 
+# 自动探测顺序：Edge 是 Windows 自带（老人机最可能有），Chrome 加密最难放最后
+_PROBE_BROWSERS = ("edge", "chrome", "firefox")
+_PROBE_TIMEOUT_S = 30
+
 
 def extract_douyin_url(text: str) -> str | None:
     """从任意分享文本中提取第一个抖音链接；无则返回 None。"""
@@ -15,7 +19,7 @@ def extract_douyin_url(text: str) -> str | None:
     return m.group(0) if m else None
 
 
-def build_ytdlp_args(url: str, dest_dir: Path, cookies_file: Path | None = None) -> list[str]:
+def build_ytdlp_args(url: str, dest_dir: Path, cookies_args: list[str] | None = None) -> list[str]:
     """构造 yt-dlp 参数（不含二进制名）。产物落在收件箱。"""
     args = [
         "--no-playlist",
@@ -23,10 +27,38 @@ def build_ytdlp_args(url: str, dest_dir: Path, cookies_file: Path | None = None)
         "--print", "title",                  # stdout 输出视频标题（供界面显示）
         "--print", "after_move:filepath",    # stdout 输出确切产物路径（不猜文件）
     ]
-    if cookies_file is not None:
-        args += ["--cookies", str(cookies_file)]  # 抖音风控需要新鲜 cookies
+    if cookies_args:
+        args += cookies_args
     args.append(url)
     return args
+
+
+def _probe_browser(url: str, browser: str) -> bool:
+    """轻量探测该浏览器的 cookies 是否够过抖音风控：--simulate 只解析不下载。"""
+    try:
+        subprocess.run(
+            [find_ytdlp(), "--no-playlist", "--simulate", "--print", "title",
+             "--cookies-from-browser", browser, url],
+            check=True, capture_output=True, text=True, timeout=_PROBE_TIMEOUT_S,
+        )
+        return True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _resolve_cookies_args(url: str, cookies_file: Path | None, memo: Path) -> list[str]:
+    """cookies 来源解析：cookies.txt 文件 > 记住的浏览器 > 探测 > 裸跑。"""
+    if cookies_file is not None and cookies_file.exists():
+        return ["--cookies", str(cookies_file)]
+    if memo.exists():
+        browser = memo.read_text(encoding="utf-8").strip()
+        if browser:
+            return ["--cookies-from-browser", browser]
+    for browser in _PROBE_BROWSERS:
+        if _probe_browser(url, browser):
+            memo.write_text(browser, encoding="utf-8")  # 记住，下次免探测
+            return ["--cookies-from-browser", browser]
+    return []  # 裸跑：可能风控失败，UI 提示走微信兜底
 
 
 def download_video(url: str, dest_dir: Path, cookies_file: Path | None = None) -> tuple[Path, str | None]:
@@ -34,13 +66,20 @@ def download_video(url: str, dest_dir: Path, cookies_file: Path | None = None) -
 
     从 stdout 拿确切产物路径（收件箱是多入口共享目录，不能按 mtime 猜文件）；
     标题用于替代不可读的数字 id。失败抛 CalledProcessError，由 UI 转人话提示。
-    cookies_file 存在才附加（Netscape 格式，浏览器插件导出后放数据目录根）。
+    cookies 自动解析：数据根的 cookies.txt（插件导出）优先，否则从本机浏览器
+    读取（探测成功的浏览器记在数据根的 cookies_source，失败自动清掉重探）。
     """
-    if cookies_file is not None and not cookies_file.exists():
-        cookies_file = None
-    proc = subprocess.run([find_ytdlp(), *build_ytdlp_args(url, dest_dir, cookies_file)],
-                          check=True, capture_output=True, text=True)
-    lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+    memo = dest_dir.parent / "cookies_source"
+    cookies_args = _resolve_cookies_args(url, cookies_file, memo)
+    try:
+        proc = subprocess.run(
+            [find_ytdlp(), *build_ytdlp_args(url, dest_dir, cookies_args)],
+            check=True, capture_output=True, text=True,
+        )
+        lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+    except Exception:
+        memo.unlink(missing_ok=True)  # 失败清浏览器记忆：下次重新探测
+        raise
     if len(lines) < 2:
         raise RuntimeError("yt-dlp 未返回产物路径")
     path = Path(lines[-1])

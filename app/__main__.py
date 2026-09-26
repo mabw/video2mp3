@@ -20,6 +20,23 @@ def _fix_tcl_for_dev_python() -> None:
                 os.environ[var] = str(path)
 
 
+def _install_excepthooks() -> None:
+    """未捕获异常落日志（windowed 打包无控制台，stderr 全丢，spec 承诺堆栈留底）。"""
+    import logging
+    import threading
+
+    logger = logging.getLogger("crash")
+
+    def sys_hook(tp, val, tb) -> None:
+        logger.exception("未捕获异常", exc_info=(tp, val, tb))
+
+    def thread_hook(args) -> None:
+        logger.error("线程未捕获异常 @%s: %s", args.thread.name, args.exc_value)
+
+    sys.excepthook = sys_hook
+    threading.excepthook = thread_hook
+
+
 def main() -> None:
     _fix_tcl_for_dev_python()
     import logging
@@ -36,6 +53,7 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    _install_excepthooks()
     MainWindow(layout).run()
 
 

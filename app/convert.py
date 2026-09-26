@@ -97,7 +97,9 @@ def convert_video(layout: Layout, uuid: str) -> bool:
             [find_ffmpeg(), *build_ffmpeg_args(str(video_path), str(dst))],
             check=True, capture_output=True,
         )
-        if abs(probe_duration(dst) - probe_duration(video_path)) >= 2.0:
+        src_duration = probe_duration(video_path)
+        dst_duration = probe_duration(dst)
+        if abs(dst_duration - src_duration) >= 2.0:
             raise RuntimeError("产出时长与原视频偏差超过 2 秒")
     except (subprocess.CalledProcessError, ValueError, RuntimeError, OSError) as exc:
         dst.unlink(missing_ok=True)
@@ -105,5 +107,5 @@ def convert_video(layout: Layout, uuid: str) -> bool:
         logger.error("[convert] %s 转换失败: %s", uuid, exc)
         return False
     update_status(layout.db_path, uuid, "done", mp3_path=str(dst),
-                  duration=int(probe_duration(dst)))
+                  duration=int(dst_duration))
     return True

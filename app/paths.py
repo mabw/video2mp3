@@ -49,9 +49,10 @@ def default_layout() -> Layout:
 
 
 def asset_path(name: str) -> Path:
-    """资源文件定位：开发态项目根 assets/，PyInstaller onedir 态 exe 同级 assets/。"""
-    if getattr(sys, "frozen", False):
-        base = Path(sys.executable).resolve().parent / "assets"
+    """资源文件定位：开发态项目根 assets/，PyInstaller onedir 态 _MEIPASS/assets/。"""
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        base = Path(meipass) / "assets"  # --add-data 落在 _internal/
     else:
         base = Path(__file__).resolve().parents[1] / "assets"
     return base / name
