@@ -1,0 +1,7 @@
+# 媒体样本与开发产物不入库
+*.mp3
+*.mp4
+dist/
+build/
+__pycache__/
+.venv/
