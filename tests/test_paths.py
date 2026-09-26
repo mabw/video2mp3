@@ -37,8 +37,8 @@ def test_write_configured_home_roundtrip(tmp_path):
 
     cfg = tmp_path / "数据目录.txt"
     write_configured_home(Path("E:/视频库"), cfg_file=cfg)
-    assert cfg.read_text(encoding="utf-8") == "E:/视频库\n"
-    assert _configured_home(cfg) == Path("E:/视频库")  # 写读一致
+    # 写读一致：比较路径语义而非字符串形态（分隔符随平台不同）
+    assert _configured_home(cfg) == Path("E:/视频库")
 
 
 def test_default_layout_config_file_wins(tmp_path, monkeypatch):
