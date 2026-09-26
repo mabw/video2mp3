@@ -20,15 +20,25 @@ def build_ytdlp_args(url: str, dest_dir: Path) -> list[str]:
     return [
         "--no-playlist",
         "-o", str(dest_dir / "%(id).30s.%(ext)s"),
+        "--print", "title",                  # stdout 输出视频标题（供界面显示）
+        "--print", "after_move:filepath",    # stdout 输出确切产物路径（不猜文件）
         url,
     ]
 
 
-def download_video(url: str, dest_dir: Path) -> Path:
-    """下载视频到收件箱，返回产物路径。失败抛 CalledProcessError，由 UI 转人话提示。"""
-    subprocess.run([find_ytdlp(), *build_ytdlp_args(url, dest_dir)],
-                   check=True, capture_output=True)
-    files = sorted(dest_dir.glob("*.mp4"), key=lambda p: p.stat().st_mtime)
-    if not files:
-        raise RuntimeError("yt-dlp 未产出 mp4")
-    return files[-1]
+def download_video(url: str, dest_dir: Path) -> tuple[Path, str | None]:
+    """下载视频到收件箱，返回 (产物路径, 视频标题|None)。
+
+    从 stdout 拿确切产物路径（收件箱是多入口共享目录，不能按 mtime 猜文件）；
+    标题用于替代不可读的数字 id。失败抛 CalledProcessError，由 UI 转人话提示。
+    """
+    proc = subprocess.run([find_ytdlp(), *build_ytdlp_args(url, dest_dir)],
+                          check=True, capture_output=True, text=True)
+    lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+    if len(lines) < 2:
+        raise RuntimeError("yt-dlp 未返回产物路径")
+    path = Path(lines[-1])
+    if not path.is_file():
+        raise RuntimeError(f"yt-dlp 产物不存在: {path}")
+    title = None if lines[-2] == "NA" else lines[-2]
+    return path, title

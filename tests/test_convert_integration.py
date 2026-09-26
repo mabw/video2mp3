@@ -53,8 +53,10 @@ def test_convert_video_produces_spec_compliant_mp3(layout):
     mp3 = layout.mp3 / f"{uid}.mp3"
     assert mp3.exists()
 
-    # 规格守护：对照实测样本（44.1kHz / stereo / ~128kbps / 无 ID3 头）
-    assert mp3.read_bytes()[:3] != b"ID3", "不应写 ID3v2 标签"
+    # 规格守护：对照实测样本（44.1kHz / stereo / ~128kbps / 无 ID3 头、裸 MPEG 帧）
+    head = mp3.read_bytes()[:4]
+    assert head[:3] != b"ID3", "不应写 ID3v2 标签"
+    assert head[:2] == b"\xff\xfb", "应以裸 MPEG 帧开头（唱戏机基准）"
     info = json.loads(
         subprocess.run(
             [FFPROBE, "-v", "quiet", "-show_streams", "-show_format",

@@ -30,18 +30,25 @@ def intake_file(layout: Layout, src: Path, source: str, title: str | None = None
     ext = src.suffix.lower() or ".mp4"
     dest = layout.video / f"{uid}{ext}"
     os.replace(src, dest)
-    insert_video(
-        layout.db_path,
-        uid,
-        title=title or src.stem,
-        video_path=str(dest),
-        source=source,
-    )
+    try:
+        insert_video(
+            layout.db_path,
+            uid,
+            title=title or src.stem,
+            video_path=str(dest),
+            source=source,
+        )
+    except Exception:
+        os.replace(dest, src)  # 回滚：文件回收件箱，避免无库记录的孤儿
+        raise
     return uid
 
 
 def scan_inbox(layout: Layout, interval: float = 1.0) -> list[str]:
-    """扫描收件箱中已写完的视频并全部录入。返回 uuid 列表。"""
+    """扫描收件箱中已写完的视频并全部录入。返回 uuid 列表。
+
+    阻塞调用（每个候选文件两次采样含 sleep），请在后台线程调用，勿在 UI 线程直接调。
+    """
     uuids: list[str] = []
     for p in sorted(layout.inbox.iterdir()):
         if not p.is_file() or p.suffix.lower() not in VIDEO_EXTS:

@@ -95,7 +95,7 @@ def convert_video(layout: Layout, uuid: str) -> bool:
         )
         if abs(probe_duration(dst) - probe_duration(video_path)) >= 2.0:
             raise RuntimeError("产出时长与原视频偏差超过 2 秒")
-    except (subprocess.CalledProcessError, ValueError, RuntimeError) as exc:
+    except (subprocess.CalledProcessError, ValueError, RuntimeError, OSError) as exc:
         dst.unlink(missing_ok=True)
         update_status(layout.db_path, uuid, "failed")
         logger.error("[convert] %s 转换失败: %s", uuid, exc)

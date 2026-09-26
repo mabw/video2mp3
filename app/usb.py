@@ -1,10 +1,13 @@
 """U 盘导出：目标以目录路径抽象（usb_root），不关心是否真盘。"""
+import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
 from app.db import VideoRecord, list_videos
 from app.paths import Layout
+
+logger = logging.getLogger(__name__)
 
 FREE_SPACE_MARGIN = 1.05  # 空间预检余量
 
@@ -55,8 +58,12 @@ def send_one(src: Path, usb_root: Path) -> str:
     if dst.exists():
         return "skipped"
     tmp = usb_root / (src.name + ".part")
-    shutil.copy2(src, tmp)
-    if tmp.stat().st_size != src.stat().st_size:  # 读回校验（防写缓存截断）
+    try:
+        shutil.copy2(src, tmp)
+    except OSError:
+        tmp.unlink(missing_ok=True)  # 中途拔盘/写保护：清残片再抛
+        raise
+    if tmp.stat().st_size != src.stat().st_size:  # 复制后大小比对（廉价即时校验）
         tmp.unlink(missing_ok=True)
         raise OSError(f"写入校验失败: {dst}")
     tmp.replace(dst)
@@ -70,6 +77,7 @@ def delete_files(paths: list[Path]) -> int:
         try:
             p.unlink()
             count += 1
-        except OSError:
+        except OSError as exc:
+            logger.warning("[usb] 删除失败 %s: %s", p, exc)  # 写保护等：留排查线索
             continue
     return count
