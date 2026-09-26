@@ -3,6 +3,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -10,14 +11,16 @@ from app.convert import convert_video, probe_duration
 from app.db import init_db, list_videos
 from app.inbox import intake_file
 
-FFMPEG = shutil.which("ffmpeg")
-FFPROBE = shutil.which("ffprobe")
+_ffmpeg_which = shutil.which("ffmpeg")
+_ffprobe_which = shutil.which("ffprobe")
 pytestmark = pytest.mark.skipif(
-    FFMPEG is None or FFPROBE is None, reason="本机无 ffmpeg（brew install ffmpeg）"
+    _ffmpeg_which is None or _ffprobe_which is None, reason="本机无 ffmpeg（brew install ffmpeg）"
 )
-if FFMPEG is None or FFPROBE is None:
+if _ffmpeg_which is None or _ffprobe_which is None:
     pytest.skip("本机无 ffmpeg", allow_module_level=True)
-assert FFMPEG is not None and FFPROBE is not None  # 类型窄化（skip 路径到此为止）
+# skip 之后必然存在；独立变量名让声明类型为 str（窄化对函数体不可见）
+FFMPEG: str = cast(str, _ffmpeg_which)
+FFPROBE: str = cast(str, _ffprobe_which)
 
 
 def _make_test_video(dest: Path, seconds: int = 3) -> Path:
