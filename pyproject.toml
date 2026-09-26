@@ -1,0 +1,17 @@
+[project]
+name = "video2mp3"
+version = "0.1.0"
+description = "视频管家：适老化视频转 MP3 并导出 U 盘工具"
+requires-python = ">=3.10"
+dependencies = ["windnd; sys_platform == 'win32'"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "network: 需要真实网络（默认跳过）",
+    "gui: 需要显示环境的 GUI 测试（默认跳过）",
+]
+addopts = "-m 'not network and not gui'"
