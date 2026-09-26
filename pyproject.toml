@@ -6,12 +6,17 @@ requires-python = ">=3.10"
 dependencies = ["windnd; sys_platform == 'win32'"]
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "ruff>=0.6"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-m 'not network and not gui' --strict-markers"
 markers = [
     "network: 需要真实网络（默认跳过）",
     "gui: 需要显示环境的 GUI 测试（默认跳过）",
 ]
-addopts = "-m 'not network and not gui'"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
