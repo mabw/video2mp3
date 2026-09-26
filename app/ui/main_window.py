@@ -262,14 +262,18 @@ class MainWindow:
         if not chosen:
             messagebox.showinfo("提示", "请先勾选要发送的视频", parent=self.root)
             return
-        size_mb = sum(Path(r.mp3_path or "").stat().st_size for r in chosen) / 1024**2
+        try:
+            sizes = [Path(r.mp3_path or "").stat().st_size for r in chosen]
+        except OSError:  # 拔盘/文件被移走的窄窗口：与 _poll_usb 同款容错
+            messagebox.showinfo("提示", "U 盘已拔出，请重新插上", parent=self.root)
+            return
+        size_mb = sum(sizes) / 1024**2
         if not messagebox.askyesno(
             "确认发送", f"即将发送 {len(chosen)} 个，大约 {size_mb:.0f} MB。\n确定吗？",
             parent=self.root,
         ):
             return
-        if not check_free_space(self.usb_root, [Path(r.mp3_path or "").stat().st_size
-                                                for r in chosen]):
+        if not check_free_space(usb_root, sizes):
             messagebox.showwarning("空间不足", "U 盘装不下了，请先删掉一些再发",
                                    parent=self.root)
             return

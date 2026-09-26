@@ -1,4 +1,8 @@
 """平台适配层：可跨平台测试的部分。"""
+import sys
+
+import pytest
+
 from app import platform as plat
 
 
@@ -12,6 +16,7 @@ def test_usb_drive_dataclass():
     assert d.display() == "金士顿 (E:)"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="验证 mac 分支的 open 命令构造")
 def test_play_media_mac_uses_open(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(plat.subprocess, "run", lambda cmd, check: calls.append((cmd, check)))

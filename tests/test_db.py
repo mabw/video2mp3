@@ -1,5 +1,17 @@
 """SQLite 映射库测试。"""
+import sqlite3
+
 from app.db import init_db, insert_video, list_videos, update_status
+
+
+def test_list_videos_tolerates_legacy_columns(layout):
+    """旧库多出的历史列（如已废弃的 sent_to_usb）不应对启动造成崩溃。"""
+    init_db(layout.db_path)
+    insert_video(layout.db_path, "u1", "t", "/v.mp4", "manual")
+    with sqlite3.connect(layout.db_path) as conn:
+        conn.execute("ALTER TABLE videos ADD COLUMN sent_to_usb INTEGER DEFAULT 0")
+    rows = list_videos(layout.db_path)
+    assert rows[0].uuid == "u1"
 
 
 def test_insert_and_list(layout):

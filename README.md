@@ -16,12 +16,30 @@
 真实抖音下载冒烟：把 `tests/test_douyin_network.py` 的占位链接换成真实
 分享短链后 `uv run pytest -m network tests/test_douyin_network.py`。
 
-## 打包发布（Windows 虚拟机）
+## 打包发布
+
+**方式一：GitHub Actions（推荐，无需本地 Windows）**
+Actions → ci → Run workflow（或推一个 `v*` tag）→ 构建完成后在该 run 的
+Artifacts 下载 `shipinguanjia-win64`，解压即完整发行目录。
+
+**方式二：本地 Windows 虚拟机**
 1. 项目根备好 `yt-dlp.exe`（官方 Releases）与 `ffmpeg-win64-gpl.zip`
    （BtbN FFmpeg-Builds）；脚本会自动解压 ffmpeg.exe
 2. `powershell scripts/build_windows.ps1`
 3. `dist\视频管家\` 整目录拷到老人电脑，右键 exe 发送到桌面快捷方式
-4. 首次运行如遇 Defender 提示：右键 → 属性 → 解除锁定 / "仍要运行"
+
+装机：首次运行如遇 Defender 提示：右键 → 属性 → 解除锁定 / "仍要运行"。
+
+## 抖音 cookies（可选增强）
+
+抖音风控要求下载方持有新鲜 cookies（**无需登录账号**）。不配置时抖音链接
+会提示失败，走微信转发路径兜底（手机抖音 分享 → 微信发送 → 电脑另存为
+收件箱），功能不受影响。
+
+配置方法（子女装机时做一次）：浏览器打开 douyin.com 随便看一眼 → 用
+"Get cookies.txt LOCALLY" 等插件导出 douyin.com 的 cookies → 文件改名为
+`cookies.txt` 放到数据目录根（`C:\视频管家\cookies.txt`）。软件自动检测
+使用；若日后提示下载失败，重新导出一次覆盖即可。
 
 ## 老人使用（装机时教学一次）
 - 视频：微信里另存到「收件箱」（桌面放收件箱快捷方式），或直接拖进软件窗口

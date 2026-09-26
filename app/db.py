@@ -71,7 +71,13 @@ def update_status(
         conn.execute(f"UPDATE videos SET {', '.join(sets)} WHERE uuid = ?", params)
 
 
+# 显式列名：旧库多出的历史列（如已废弃的 sent_to_usb）自动忽略，避免启动即崩
+_COLUMNS = "uuid, title, video_path, mp3_path, source, duration, status, created_at"
+
+
 def list_videos(db_path: Path) -> list[VideoRecord]:
     with _connect(db_path) as conn:
-        rows = conn.execute("SELECT * FROM videos ORDER BY created_at DESC, uuid DESC").fetchall()
+        rows = conn.execute(
+            f"SELECT {_COLUMNS} FROM videos ORDER BY created_at DESC, uuid DESC"
+        ).fetchall()
     return [VideoRecord(**dict(r)) for r in rows]
