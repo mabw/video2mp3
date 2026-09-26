@@ -12,8 +12,7 @@ CREATE TABLE IF NOT EXISTS videos (
   source     TEXT CHECK(source IN ('wechat','douyin','manual')),
   duration   INTEGER,
   status     TEXT DEFAULT 'pending',
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-  sent_to_usb INTEGER DEFAULT 0
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 """
 
@@ -28,7 +27,6 @@ class VideoRecord:
     duration: int | None
     status: str
     created_at: str
-    sent_to_usb: int
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:

@@ -22,12 +22,20 @@ def _fix_tcl_for_dev_python() -> None:
 
 def main() -> None:
     _fix_tcl_for_dev_python()
+    import logging
+
     from app.db import init_db
     from app.paths import default_layout
     from app.ui.main_window import MainWindow
 
     layout = default_layout()
     init_db(layout.db_path)
+    # 日志落盘：打包版无控制台，stderr 输出会全部丢失（spec 承诺 logs/app.log）
+    logging.basicConfig(
+        filename=layout.logs / "app.log",
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     MainWindow(layout).run()
 
 
