@@ -10,7 +10,7 @@ from app.convert import convert_video
 from app.db import list_videos
 from app.douyin import download_video, extract_douyin_url
 from app.inbox import intake_file, scan_inbox
-from app.paths import Layout
+from app.paths import Layout, asset_path
 from app.ui import style
 from app.ui.usb_window import open_usb_window
 from app.usb import check_free_space, send_one, usb_uuids
@@ -33,6 +33,11 @@ class MainWindow:
         self.root.title("视频管家")
         self.root.geometry("980x720")
         self.root.configure(bg=style.COLOR_BG)
+        try:
+            self._icon = tk.PhotoImage(file=str(asset_path("icon.png")))
+            self.root.iconphoto(True, self._icon)
+        except tk.TclError:
+            pass  # 资源缺失不阻断启动
 
         self._build_link_area()
         self._build_list_area()

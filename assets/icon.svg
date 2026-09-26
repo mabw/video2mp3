@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- 视频管家图标：绿色圆角底 + 白色音符（MP3）+ U 盘剪影 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2e9e4f"/>
+      <stop offset="1" stop-color="#156529"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#bg)"/>
+  <!-- 八分音符 -->
+  <g fill="#ffffff">
+    <ellipse cx="96" cy="180" rx="27" ry="21" transform="rotate(-15 96 180)"/>
+    <rect x="117" y="60" width="14" height="122" rx="6"/>
+    <path d="M131 60 q54 12 46 62 q-6 -34 -46 -38 z"/>
+  </g>
+  <!-- U 盘（右下，插头朝上） -->
+  <g>
+    <rect x="156" y="140" width="48" height="22" rx="4" fill="#d7ecdf"/>
+    <rect x="164" y="146" width="9" height="14" fill="#156529"/>
+    <rect x="188" y="146" width="9" height="14" fill="#156529"/>
+    <rect x="146" y="160" width="68" height="56" rx="14" fill="#ffffff"/>
+  </g>
+</svg>

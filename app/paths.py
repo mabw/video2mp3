@@ -46,3 +46,12 @@ def default_layout() -> Layout:
     else:
         root = Path.home() / ".video2mp3"
     return Layout.create(root)
+
+
+def asset_path(name: str) -> Path:
+    """资源文件定位：开发态项目根 assets/，PyInstaller onedir 态 exe 同级 assets/。"""
+    if getattr(sys, "frozen", False):
+        base = Path(sys.executable).resolve().parent / "assets"
+    else:
+        base = Path(__file__).resolve().parents[1] / "assets"
+    return base / name
