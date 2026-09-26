@@ -116,3 +116,41 @@ def test_download_video_raises_on_missing_output(monkeypatch, tmp_path):
 
     with pytest.raises(RuntimeError, match="产物不存在"):
         douyin.download_video("https://v.douyin.com/iABc123/", tmp_path)
+
+
+def test_download_video_retries_after_browser_open(monkeypatch, tmp_path):
+    """cookies 缺失失败 → 自动开浏览器种 cookies → 等待 → 重试成功。"""
+    import subprocess as real_subprocess
+    import webbrowser
+
+    from app import douyin
+
+    mp4 = tmp_path / "abc.mp4"
+    mp4.write_bytes(b"x" * 8)
+    calls = {"n": 0}
+    actions = []
+    monkeypatch.setattr(douyin.time, "sleep", lambda s: actions.append(f"sleep{s}"))
+    monkeypatch.setattr(webbrowser, "open", lambda u: actions.append(u) or True)
+    monkeypatch.setattr(douyin, "_resolve_cookies_args", lambda *a: [])
+
+    class FakeProc:
+        stdout = f"标题\n{mp4}\n"
+
+    def fake_run(cmd, check, capture_output, text=True, timeout=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            exc = real_subprocess.CalledProcessError(1, cmd)
+            exc.stderr = "ERROR: [Douyin] Fresh cookies (not necessarily logged in)"
+            raise exc
+        return FakeProc()
+
+    monkeypatch.setattr(douyin.subprocess, "run", fake_run)
+    monkeypatch.setattr(douyin, "find_ytdlp", lambda: "yt-dlp")
+    hints = []
+    path, title = douyin.download_video("https://v.douyin.com/x/", tmp_path,
+                                        status_cb=hints.append)
+    assert calls["n"] == 2                       # 重试了一轮
+    assert any("douyin.com" in a for a in actions)  # 打开了抖音网页
+    assert any(a.startswith("sleep") for a in actions)
+    assert hints                                 # UI 收到等待提示
+    assert title == "标题"

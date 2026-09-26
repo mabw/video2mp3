@@ -186,6 +186,8 @@ class MainWindow:
                 kind, payload = self.events.get_nowait()
                 if kind == "convert":
                     self._start_conversion(payload)
+                elif kind == "hint":
+                    self.link_hint.config(text=payload)
                 elif kind == "refresh":
                     self._refresh_list()
                 elif kind == "sent":
@@ -233,9 +235,13 @@ class MainWindow:
 
         def work():
             try:
-                path, title = download_video(url, self.layout.inbox,
-                                             cookies_file=self.layout.root / "cookies.txt")
+                path, title = download_video(
+                    url, self.layout.inbox,
+                    cookies_file=self.layout.root / "cookies.txt",
+                    status_cb=lambda msg: self.events.put(("hint", msg)),
+                )
                 uid = intake_file(self.layout, path, source="douyin", title=title)
+                self.events.put(("hint", ""))
                 self.events.put(("convert", uid))
             except Exception:
                 logger.exception("[douyin] 下载失败: %s", url)

@@ -1,6 +1,7 @@
 """抖音入口：分享文本中的链接提取 + yt-dlp 下载（含 cookies 自动解析）。"""
 import re
 import subprocess
+import time
 from pathlib import Path
 
 from app.convert import find_ytdlp
@@ -11,6 +12,7 @@ _DOUYIN_RE = re.compile(r"https?://(?:v\.douyin\.com|www\.douyin\.com)/[A-Za-z0-
 # 自动探测顺序：Edge 是 Windows 自带（老人机最可能有），Chrome 加密最难放最后
 _PROBE_BROWSERS = ("edge", "chrome", "firefox")
 _PROBE_TIMEOUT_S = 30
+BROWSER_OPEN_WAIT_S = 20  # 打开抖音网页后等待 cookies 生效的秒数
 
 
 def extract_douyin_url(text: str) -> str | None:
@@ -61,25 +63,46 @@ def _resolve_cookies_args(url: str, cookies_file: Path | None, memo: Path) -> li
     return []  # 裸跑：可能风控失败，UI 提示走微信兜底
 
 
-def download_video(url: str, dest_dir: Path, cookies_file: Path | None = None) -> tuple[Path, str | None]:
+def download_video(
+    url: str,
+    dest_dir: Path,
+    cookies_file: Path | None = None,
+    status_cb=None,
+) -> tuple[Path, str | None]:
     """下载视频到收件箱，返回 (产物路径, 视频标题|None)。
 
     从 stdout 拿确切产物路径（收件箱是多入口共享目录，不能按 mtime 猜文件）；
     标题用于替代不可读的数字 id。失败抛 CalledProcessError，由 UI 转人话提示。
     cookies 自动解析：数据根的 cookies.txt（插件导出）优先，否则从本机浏览器
     读取（探测成功的浏览器记在数据根的 cookies_source，失败自动清掉重探）。
+    若因 cookies 缺失失败：自动打开一次抖音网页（种下匿名 cookies）等待
+    页面生效后重试一轮（status_cb 用于向 UI 报告等待状态），仍失败才抛出。
     """
     memo = dest_dir.parent / "cookies_source"
-    cookies_args = _resolve_cookies_args(url, cookies_file, memo)
-    try:
-        proc = subprocess.run(
-            [find_ytdlp(), *build_ytdlp_args(url, dest_dir, cookies_args)],
-            check=True, capture_output=True, text=True,
-        )
-        lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
-    except Exception:
-        memo.unlink(missing_ok=True)  # 失败清浏览器记忆：下次重新探测
-        raise
+    lines: list[str] = []  # 循环内成功路径必赋值；此处初始化仅为静态分析
+    for attempt in range(2):
+        cookies_args = _resolve_cookies_args(url, cookies_file, memo)
+        try:
+            proc = subprocess.run(
+                [find_ytdlp(), *build_ytdlp_args(url, dest_dir, cookies_args)],
+                check=True, capture_output=True, text=True,
+            )
+            lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+            break  # 下载命令成功，跳出重试循环
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "") + (exc.stdout or "")
+            if attempt == 0 and "cookie" in stderr.lower():
+                # cookies 缺失：打开抖音网页种匿名 cookies，稍候重试
+                if status_cb is not None:
+                    status_cb("正在打开抖音网页获取访问权限，请稍等十几秒…")
+                import webbrowser
+
+                webbrowser.open("https://www.douyin.com/")
+                time.sleep(BROWSER_OPEN_WAIT_S)
+                memo.unlink(missing_ok=True)  # 清记忆，重探含刚种 cookies 的浏览器
+                continue
+            memo.unlink(missing_ok=True)  # 失败清浏览器记忆：下次重新探测
+            raise
     if len(lines) < 2:
         raise RuntimeError("yt-dlp 未返回产物路径")
     path = Path(lines[-1])
