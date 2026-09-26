@@ -1,6 +1,9 @@
-# 服务层单测 + 转换集成（Windows/macOS 双矩阵；推 GitHub 后生效）
+# 服务层单测 + 转换集成（双矩阵）+ tag/手动触发的 Windows 打包
 name: ci
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
 jobs:
   test:
     strategy:
@@ -16,3 +19,24 @@ jobs:
         run: choco install -y ffmpeg
       - run: uv sync
       - run: uv run pytest -v
+
+  build:
+    # 打 tag（v*）或手动触发时打包 Windows 发行版，产物在 Actions Artifacts 下载
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: 下载外部工具（官方源，runner 直连快）
+        shell: pwsh
+        run: |
+          curl.exe -sS -L --fail -o yt-dlp.exe https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe
+          curl.exe -sS -L --fail -o ffmpeg-win64-gpl.zip https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip
+      - name: 打包（复用 scripts/build_windows.ps1：解压 ffmpeg + PyInstaller onedir）
+        shell: pwsh
+        run: powershell -File scripts/build_windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shipinguanjia-win64
+          path: dist/视频管家/
+          if-no-files-found: error
