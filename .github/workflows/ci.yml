@@ -1,0 +1,18 @@
+# 服务层单测 + 转换集成（Windows/macOS 双矩阵；推 GitHub 后生效）
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: 安装 ffmpeg（Windows runner 不自带）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install -y ffmpeg
+      - run: uv sync
+      - run: uv run pytest -v
