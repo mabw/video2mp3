@@ -3,7 +3,10 @@ name = "video2mp3"
 version = "0.1.0"
 description = "视频管家：适老化视频转 MP3 并导出 U 盘工具"
 requires-python = ">=3.10"
-dependencies = ["windnd; sys_platform == 'win32'"]
+dependencies = [
+    "windnd; sys_platform == 'win32'",
+    "psutil; sys_platform == 'win32'",
+]
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.6"]
