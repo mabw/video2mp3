@@ -4,7 +4,7 @@ import shutil
 import pytest
 
 from app.db import init_db, insert_video
-from app.usb import check_free_space, match_usb_items, usb_uuids
+from app.usb import check_free_space, delete_files, match_usb_items, send_one, usb_uuids
 
 
 @pytest.fixture
@@ -39,3 +39,33 @@ def test_check_free_space(usb_root):
     total = shutil.disk_usage(usb_root).free
     assert check_free_space(usb_root, [1]) is True          # 1 字节总装得下
     assert check_free_space(usb_root, [total]) is False     # 全盘大小必装不下（1.05 倍余量）
+
+
+def test_send_one_copies_and_verifies(usb_root, layout):
+    src = layout.mp3 / "aaa.mp3"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_bytes(b"x" * 2048)
+
+    assert send_one(src, usb_root) == "copied"
+    dst = usb_root / "aaa.mp3"
+    assert dst.read_bytes() == src.read_bytes()
+
+
+def test_send_one_skips_existing_without_overwrite(usb_root, layout):
+    src = layout.mp3 / "aaa.mp3"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_bytes(b"new-content")
+    dst = usb_root / "aaa.mp3"
+    dst.write_bytes(b"old-content")
+
+    assert send_one(src, usb_root) == "skipped"
+    assert dst.read_bytes() == b"old-content"  # 盘上内容不被覆盖
+
+
+def test_delete_files_removes_and_returns_count(usb_root):
+    a = usb_root / "a.mp3"
+    b = usb_root / "b.mp3"
+    a.write_bytes(b"x")
+    b.write_bytes(b"x")
+    assert delete_files([a, b]) == 2
+    assert not a.exists() and not b.exists()

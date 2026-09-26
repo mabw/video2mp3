@@ -47,3 +47,29 @@ def check_free_space(usb_root: Path, byte_sizes: list[int]) -> bool:
     """按 1.05 倍余量检查目标剩余空间是否够用。"""
     need = sum(byte_sizes) * FREE_SPACE_MARGIN
     return shutil.disk_usage(usb_root).free >= need
+
+
+def send_one(src: Path, usb_root: Path) -> str:
+    """复制一首到 U 盘根目录；已存在同名则跳过（不覆盖），复制后读回校验。"""
+    dst = usb_root / src.name
+    if dst.exists():
+        return "skipped"
+    tmp = usb_root / (src.name + ".part")
+    shutil.copy2(src, tmp)
+    if tmp.stat().st_size != src.stat().st_size:  # 读回校验（防写缓存截断）
+        tmp.unlink(missing_ok=True)
+        raise OSError(f"写入校验失败: {dst}")
+    tmp.replace(dst)
+    return "copied"
+
+
+def delete_files(paths: list[Path]) -> int:
+    """删除盘内文件，返回成功数。只动 U 盘，不动本地库。"""
+    count = 0
+    for p in paths:
+        try:
+            p.unlink()
+            count += 1
+        except OSError:
+            continue
+    return count
