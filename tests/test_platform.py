@@ -10,3 +10,10 @@ def test_get_usb_root_env_override(tmp_path, monkeypatch):
 def test_usb_drive_dataclass():
     d = plat.UsbDrive(volume_label="金士顿", drive="E:", free_bytes=1024)
     assert d.display() == "金士顿 (E:)"
+
+
+def test_play_media_mac_uses_open(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(plat.subprocess, "run", lambda cmd, check: calls.append((cmd, check)))
+    plat.play_media(tmp_path / "a.mp3")
+    assert calls == [(["open", str(tmp_path / "a.mp3")], False)]

@@ -33,7 +33,10 @@ def detect_removable_drives() -> list[UsbDrive]:
         if not _is_removable(part.device):
             continue
         label = _volume_label(part.device)
-        free = psutil.disk_usage(part.mountpoint).free
+        try:
+            free = psutil.disk_usage(part.mountpoint).free
+        except OSError:
+            continue  # 枚举与用量查询之间盘被拔出：跳过该盘，保证枚举永不抛
         drives.append(UsbDrive(label, part.mountpoint.rstrip("\\/"), free))
     return drives
 
