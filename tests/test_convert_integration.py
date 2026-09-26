@@ -15,8 +15,9 @@ FFPROBE = shutil.which("ffprobe")
 pytestmark = pytest.mark.skipif(
     FFMPEG is None or FFPROBE is None, reason="本机无 ffmpeg（brew install ffmpeg）"
 )
-if FFMPEG is None or FFPROBE is None:  # 供类型检查器窄化（skipif 不被其理解）
+if FFMPEG is None or FFPROBE is None:
     pytest.skip("本机无 ffmpeg", allow_module_level=True)
+assert FFMPEG is not None and FFPROBE is not None  # 类型窄化（skip 路径到此为止）
 
 
 def _make_test_video(dest: Path, seconds: int = 3) -> Path:
