@@ -36,8 +36,9 @@ def find_tool(name: str, env_var: str) -> str:
     if env_val and Path(env_val).exists():
         return env_val
     exe = f"{name}.exe" if sys.platform == "win32" else name
-    if getattr(sys, "frozen", False):
-        beside = Path(sys._MEIPASS) / exe  # PyInstaller onedir 的 _internal/
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        beside = Path(meipass) / exe  # PyInstaller onedir 的 _internal/
     else:
         beside = Path(__file__).resolve().parent / exe
     if beside.exists():
