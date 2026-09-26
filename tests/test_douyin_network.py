@@ -8,5 +8,6 @@ pytestmark = pytest.mark.network
 
 def test_real_download(layout):
     # 换成任意真实的抖音分享短链后手动运行
-    path = download_video("https://v.douyin.com/_REPLACE_ME_/", layout.inbox)
+    path, title = download_video("https://v.douyin.com/_REPLACE_ME_/", layout.inbox)
     assert path.exists() and path.stat().st_size > 100_000
+    assert title  # 标题应可读而非空
