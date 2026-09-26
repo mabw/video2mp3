@@ -216,7 +216,8 @@ class MainWindow:
 
         def work():
             try:
-                path, title = download_video(url, self.layout.inbox)
+                path, title = download_video(url, self.layout.inbox,
+                                             cookies_file=self.layout.root / "cookies.txt")
                 uid = intake_file(self.layout, path, source="douyin", title=title)
                 self.events.put(("convert", uid))
             except Exception:  # noqa: BLE001 -- UI 边界兜底：任何失败都转成人话提示

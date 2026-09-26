@@ -15,24 +15,30 @@ def extract_douyin_url(text: str) -> str | None:
     return m.group(0) if m else None
 
 
-def build_ytdlp_args(url: str, dest_dir: Path) -> list[str]:
+def build_ytdlp_args(url: str, dest_dir: Path, cookies_file: Path | None = None) -> list[str]:
     """构造 yt-dlp 参数（不含二进制名）。产物落在收件箱。"""
-    return [
+    args = [
         "--no-playlist",
         "-o", str(dest_dir / "%(id).30s.%(ext)s"),
         "--print", "title",                  # stdout 输出视频标题（供界面显示）
         "--print", "after_move:filepath",    # stdout 输出确切产物路径（不猜文件）
-        url,
     ]
+    if cookies_file is not None:
+        args += ["--cookies", str(cookies_file)]  # 抖音风控需要新鲜 cookies
+    args.append(url)
+    return args
 
 
-def download_video(url: str, dest_dir: Path) -> tuple[Path, str | None]:
+def download_video(url: str, dest_dir: Path, cookies_file: Path | None = None) -> tuple[Path, str | None]:
     """下载视频到收件箱，返回 (产物路径, 视频标题|None)。
 
     从 stdout 拿确切产物路径（收件箱是多入口共享目录，不能按 mtime 猜文件）；
     标题用于替代不可读的数字 id。失败抛 CalledProcessError，由 UI 转人话提示。
+    cookies_file 存在才附加（Netscape 格式，浏览器插件导出后放数据目录根）。
     """
-    proc = subprocess.run([find_ytdlp(), *build_ytdlp_args(url, dest_dir)],
+    if cookies_file is not None and not cookies_file.exists():
+        cookies_file = None
+    proc = subprocess.run([find_ytdlp(), *build_ytdlp_args(url, dest_dir, cookies_file)],
                           check=True, capture_output=True, text=True)
     lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
     if len(lines) < 2:

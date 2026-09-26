@@ -25,6 +25,14 @@ def test_build_ytdlp_args(tmp_path):
     # --print 两项：标题 + 确切产物路径（不靠 mtime 猜文件）
     assert "--print" in args
     assert "after_move:filepath" in args
+    assert "--cookies" not in args  # 未提供 cookies 文件时不附加
+
+
+def test_build_ytdlp_args_with_cookies(tmp_path):
+    cookies = tmp_path / "cookies.txt"
+    args = build_ytdlp_args("https://v.douyin.com/iABc123/", tmp_path, cookies_file=cookies)
+    i = args.index("--cookies")
+    assert args[i + 1] == str(cookies)
 
 
 def test_download_video_parses_print_output(monkeypatch, tmp_path):
