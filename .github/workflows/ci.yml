@@ -22,6 +22,8 @@ jobs:
 
   build:
     # 打 tag（v*）或手动触发时打包 Windows 发行版；tag 时自动发布到 Releases
+    # 测试不绿不发版（v0.1.8 曾因测试红仍发版被坑）
+    needs: test
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     permissions:

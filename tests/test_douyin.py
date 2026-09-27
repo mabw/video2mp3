@@ -123,7 +123,6 @@ def test_download_video_raises_on_missing_output(monkeypatch, tmp_path):
 def test_download_video_retries_after_browser_open(monkeypatch, tmp_path):
     """cookies 缺失失败 → 自动开浏览器种 cookies → 等待 → 重试成功。"""
     import subprocess as real_subprocess
-    import webbrowser
 
     from app import douyin
 
@@ -132,7 +131,10 @@ def test_download_video_retries_after_browser_open(monkeypatch, tmp_path):
     calls = {"n": 0}
     actions = []
     monkeypatch.setattr(douyin.time, "sleep", lambda s: actions.append(f"sleep{s}"))
-    monkeypatch.setattr(webbrowser, "open", lambda u: actions.append(u) or True)
+    # monkeypatch 打开动作本身（平台分支由 _open_douyin_page 的专属测试覆盖），
+    # 不可 mock webbrowser.open：Windows 走 Edge 分支根本不经过它，会造成双平台断言分叉
+    monkeypatch.setattr(douyin, "_open_douyin_page",
+                        lambda: actions.append("https://www.douyin.com/"))
     monkeypatch.setattr(douyin, "_resolve_cookies_args", lambda *a: [])
 
     class FakeProc:
