@@ -73,6 +73,12 @@ def build_ytdlp_args(url: str, dest_dir: Path, cookies_args: list[str] | None = 
     """构造 yt-dlp 参数（不含二进制名）。产物落在收件箱。"""
     args = [
         "--no-playlist",
+        # 优先 H.264：抖音源默认"最佳"常落在 HEVC 播放流，Windows 自带播放器
+        # 缺 HEVC 解码会打不开原视频；转 MP3 不受影响（只取音频）。
+        # 用 -S 排序偏好而非 -f 过滤：抖音的 h264 档是合成流，-f 的 bv* 选择器
+        # 匹配不到（实测踩过）；-S +vcodec:h264 把编码偏好提到排序最前
+        "-S", "+vcodec:h264",
+        "--merge-output-format", "mp4",
         "-o", str(dest_dir / "%(id).30s.%(ext)s"),
         "--print", "title",                  # stdout 输出视频标题（供界面显示）
         "--print", "after_move:filepath",    # stdout 输出确切产物路径（不猜文件）

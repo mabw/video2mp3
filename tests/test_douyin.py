@@ -28,6 +28,10 @@ def test_build_ytdlp_args(tmp_path):
     # --print 两项：标题 + 确切产物路径（不靠 mtime 猜文件）
     assert "--print" in args
     assert "after_move:filepath" in args
+    # 优先 H.264（Windows 自带播放器无 HEVC 解码时打不开原视频）
+    i = args.index("-S")
+    assert "vcodec:h264" in args[i + 1]
+    assert "--merge-output-format" in args
     assert "--cookies" not in args  # 未提供 cookies 文件时不附加
 
 
