@@ -1,5 +1,5 @@
 """收件箱：三个入口（拖拽/另存为/抖音下载）的统一收敛点。"""
-import os
+import shutil
 import time
 import uuid as uuidlib
 from pathlib import Path
@@ -25,11 +25,15 @@ def is_file_stable(path: Path, interval: float = 1.0) -> bool:
 
 
 def intake_file(layout: Layout, src: Path, source: str, title: str | None = None) -> str:
-    """生成 UUID、把原视频改名移入存档、写库（pending）。返回 uuid。"""
+    """生成 UUID、把原视频改名移入存档、写库（pending）。返回 uuid。
+
+    用 shutil.move 而非 os.replace：拖拽来源可能是其他盘（跨盘移动），
+    shutil.move 会自动降级为复制+删除。
+    """
     uid = uuidlib.uuid4().hex
     ext = src.suffix.lower() or ".mp4"
     dest = layout.video / f"{uid}{ext}"
-    os.replace(src, dest)
+    shutil.move(str(src), str(dest))
     try:
         insert_video(
             layout.db_path,
@@ -39,7 +43,7 @@ def intake_file(layout: Layout, src: Path, source: str, title: str | None = None
             source=source,
         )
     except Exception:
-        os.replace(dest, src)  # 回滚：文件回收件箱，避免无库记录的孤儿
+        shutil.move(str(dest), str(src))  # 回滚：文件回原处，避免无库记录的孤儿
         raise
     return uid
 
