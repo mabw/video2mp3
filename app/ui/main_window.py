@@ -174,7 +174,8 @@ class MainWindow:
         else:
             status = {"pending": "等待中…", "converting": "转换中…",
                       "failed": "❌转换失败", "done": ""}.get(rec.status, "")
-        text = f"{rec.title}（{duration}）" if duration else rec.title
+        title = style.shorten_title(rec.title)  # 长标题截断，防按钮被挤出窗口
+        text = f"{title}（{duration}）" if duration else title
         color = style.COLOR_DISABLED if (on_usb or file_lost) else style.COLOR_TEXT
         tk.Label(row, text=f"{text}  {status}", font=style.FONT_BODY, bg=row["bg"],
                  fg=color).pack(side="left", padx=8, pady=12)
@@ -201,7 +202,7 @@ class MainWindow:
         """删除本地条目及电脑上的视频/MP3 文件（U 盘内容不动），须二次确认。"""
         if not messagebox.askyesno(
             "确认删除",
-            f"确定删除「{rec.title}」吗？\n\n"
+            f"确定删除「{style.shorten_title(rec.title)}」吗？\n\n"
             "电脑上的视频和音乐都会一起删掉。\n"
             "（U 盘里已经发送的不受影响）",
             parent=self.root,

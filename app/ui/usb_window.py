@@ -43,7 +43,8 @@ def open_usb_window(
         vars_list.append(var)
         tk.Checkbutton(row, variable=var, bg=row_bg).pack(side="left", padx=(8, 0))
         duration = f"{item.duration // 60}分{item.duration % 60}秒" if item.duration else ""
-        text = f"{item.title}（{duration}）" if duration else item.title
+        title = style.shorten_title(item.title)  # 长标题截断，防行内布局位移
+        text = f"{title}（{duration}）" if duration else title
         if not item.in_library:
             text += "  （不是视频管家传的）"
         tk.Label(row, text=text, font=style.FONT_BODY, bg=row_bg).pack(
