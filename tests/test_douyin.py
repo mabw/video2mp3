@@ -209,6 +209,7 @@ def test_open_douyin_page_uses_edge_on_windows(monkeypatch):
 
     opened = []
     monkeypatch.setattr(douyin.sys, "platform", "win32")
+    monkeypatch.setattr(douyin.os.path, "isfile", lambda p: True)  # mac 上无 msedge 真路径
     monkeypatch.setattr(webbrowser, "register", lambda *a, **k: None)
 
     class FakeBrowser:
@@ -239,3 +240,66 @@ def test_open_douyin_page_falls_back_on_edge_failure(monkeypatch):
     monkeypatch.setattr(webbrowser, "open", lambda u: opened.append(u))
     douyin._open_douyin_page()
     assert opened == ["https://www.douyin.com/"]
+
+
+def test_open_douyin_page_picks_existing_edge_path(monkeypatch):
+    """Edge 双候选路径：只认真实存在的那个（x86 不存在时用 Program Files）。"""
+    import webbrowser
+
+    from app import douyin
+
+    registered = {}
+    monkeypatch.setattr(douyin.sys, "platform", "win32")
+
+    def fake_isfile(p):
+        # mac 上 expandvars 不展开 %VAR%，候选路径保持字面量，按候选序号区分：
+        # 只让第二个候选（非 x86 的 Program Files）存在
+        return "ProgramFiles" in p and "(x86)" not in p
+
+    monkeypatch.setattr(douyin.os.path, "isfile", fake_isfile)
+    monkeypatch.setattr(webbrowser, "register",
+                        lambda name, a, b: registered.setdefault(name, b))
+    opened = []
+
+    class FakeBrowser:
+        def open(self, url):
+            opened.append(url)
+            return True
+
+    monkeypatch.setattr(webbrowser, "get", lambda name: FakeBrowser())
+    monkeypatch.setattr(webbrowser, "open", lambda u: opened.append(("default", u)))
+    douyin._open_douyin_page()
+    assert opened == ["https://www.douyin.com/"]  # 走了 Edge 分支
+    assert "(x86)" not in registered["v2m_edge"].name  # 选了存在的那个候选路径
+
+
+def test_open_douyin_page_no_edge_uses_default(monkeypatch):
+    """两个候选路径都不存在：退回默认浏览器（并留日志）。"""
+    import webbrowser
+
+    from app import douyin
+
+    opened = []
+    monkeypatch.setattr(douyin.sys, "platform", "win32")
+    monkeypatch.setattr(douyin.os.path, "isfile", lambda p: False)
+    monkeypatch.setattr(webbrowser, "open", lambda u: opened.append(u))
+    douyin._open_douyin_page()
+    assert opened == ["https://www.douyin.com/"]
+
+
+def test_probe_browser_logs_failure_reason(monkeypatch, caplog):
+    """探测失败原因必须落日志（锁/解密/未落盘三态分辨全靠它）。"""
+    import logging as _logging
+    import subprocess as real_subprocess
+
+    from app import douyin
+
+    def fake_run(*a, **k):
+        raise real_subprocess.CalledProcessError(1, ["yt-dlp"])
+
+    monkeypatch.setattr(douyin.subprocess, "run", fake_run)
+    monkeypatch.setattr(douyin, "find_ytdlp", lambda: "yt-dlp")
+    with caplog.at_level(_logging.WARNING):
+        ok = douyin._probe_browser("https://v.douyin.com/x/", "edge")
+    assert ok is False
+    assert any("探测" in r.message for r in caplog.records)

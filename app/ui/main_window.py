@@ -7,6 +7,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from app import platform as plat
+from app.__version__ import __version__
 from app.convert import convert_video
 from app.db import delete_video, list_videos
 from app.douyin import download_video, extract_douyin_url
@@ -34,7 +35,7 @@ class MainWindow:
         self._handled_urls: set[str] = set()  # 已下载过的抖音链接（防剪贴板回填重复诱导）
 
         self.root = tk.Tk()
-        self.root.title("视频管家")
+        self.root.title(f"视频管家 v{__version__}")
         self.root.geometry("980x720")
         self.root.configure(bg=style.COLOR_BG)
         # Tk 回调异常不走 sys.excepthook；--windowed 打包下 stderr 为 None，
