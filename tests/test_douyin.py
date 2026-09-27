@@ -135,6 +135,10 @@ def test_download_video_retries_after_browser_open(monkeypatch, tmp_path):
     # 不可 mock webbrowser.open：Windows 走 Edge 分支根本不经过它，会造成双平台断言分叉
     monkeypatch.setattr(douyin, "_open_douyin_page",
                         lambda: actions.append("https://www.douyin.com/"))
+    # 重试流程会真的 taskkill 关 Edge：测试环境绝不能跑（Windows CI 无 Edge，
+    # 但任何真实子进程副作用都不属于单测）
+    monkeypatch.setattr(douyin, "_close_edge_browsers",
+                        lambda: actions.append("closed_edge"))
     monkeypatch.setattr(douyin, "_resolve_cookies_args", lambda *a: [])
 
     class FakeProc:
@@ -172,6 +176,7 @@ def test_download_video_polling_stops_early(monkeypatch, tmp_path):
     mp4.write_bytes(b"x" * 8)
     monkeypatch.setattr(douyin.time, "sleep", lambda s: None)
     monkeypatch.setattr(webbrowser, "open", lambda u: True)
+    monkeypatch.setattr(douyin, "_close_edge_browsers", lambda: None)
     calls = {"resolve": 0, "run": 0}
 
     def fake_resolve(*a):
@@ -199,6 +204,33 @@ def test_download_video_polling_stops_early(monkeypatch, tmp_path):
     assert (path, title) == (mp4, "标题")
     # 首轮解析 1 + 轮询 3 + 第二轮下载前解析 1 = 5 次（跑满会是 8 次）
     assert calls["resolve"] == 5
+
+
+def test_close_edge_browsers_runs_taskkill_on_windows(monkeypatch):
+    """Windows 上用 taskkill 关闭 Edge 释放 cookie 库；命令带无窗标志。"""
+    from app import douyin
+
+    ran = []
+    monkeypatch.setattr(douyin.sys, "platform", "win32")
+
+    def fake_run(cmd, **k):
+        ran.append((cmd, k.get("creationflags")))
+        return type("P", (), {"returncode": 0})()
+
+    monkeypatch.setattr(douyin.subprocess, "run", fake_run)
+    douyin._close_edge_browsers()
+    assert ran and ran[0][0][:4] == ["taskkill", "/F", "/IM", "msedge.exe"]
+    assert ran[0][1] == douyin._NO_WINDOW
+
+
+def test_close_edge_browsers_noop_off_windows(monkeypatch):
+    """非 Windows 平台直接跳过（不调任何子进程）。"""
+    from app import douyin
+
+    monkeypatch.setattr(douyin.subprocess, "run",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("不应调子进程")))
+    monkeypatch.setattr(douyin.sys, "platform", "darwin")
+    douyin._close_edge_browsers()  # 不抛即通过
 
 
 def test_open_douyin_page_uses_edge_on_windows(monkeypatch):

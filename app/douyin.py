@@ -31,6 +31,28 @@ _PROBE_TIMEOUT_S = 30
 # 加大窗口并轮询探测，一旦成功立即中止）
 COOKIE_POLL_INTERVAL_S = 20
 COOKIE_POLL_ROUNDS = 8  # 最多 8 轮 × 20 秒 ≈ 160 秒
+# Edge 把 cookies 写入磁盘的周期约 30 秒：先固定等它落盘，再关闭 Edge 释放
+# cookie 库（Edge 运行中 Windows 上独占锁定该库，yt-dlp 复制不了——真机日志
+# "Could not copy Chrome cookie database" 实证），然后才轮询探测
+COOKIE_FLUSH_WAIT_S = 75
+
+
+def _close_edge_browsers() -> None:
+    """关闭本用户的 Edge 进程以释放被独占的 cookie 数据库（仅 Windows）。
+
+    仅在"软件自己打开 Edge 种 cookie → 等落盘"之后调用：此刻 cookie 已
+    持久化，强杀不丢数据。老人机场景下 Edge 通常只开着我们打开的抖音页。
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        subprocess.run(
+            ["taskkill", "/F", "/IM", "msedge.exe"],
+            check=False, capture_output=True, creationflags=_NO_WINDOW,
+        )
+        logger.info("[douyin] 已尝试关闭 Edge 释放 cookie 库")
+    except OSError as exc:  # taskkill 不存在等极端情况：不影响主流程
+        logger.warning("[douyin] 关闭 Edge 失败（不影响继续探测）: %s", exc)
 
 
 def extract_douyin_url(text: str) -> str | None:
@@ -151,11 +173,15 @@ def download_video(
             # stderr 落日志：真机上"获取不到权限"的具体原因（锁/解密/风控）全在这里
             logger.error("[douyin] yt-dlp 第 %d 次尝试失败:\n%s", attempt + 1, stderr)
             if attempt == 0 and "cookie" in stderr.lower():
-                # cookies 缺失：打开抖音网页种匿名 cookies，轮询等它落盘
+                # cookies 缺失：打开抖音网页种匿名 cookies，等落盘后关浏览器再探测
                 if status_cb is not None:
-                    status_cb("正在打开抖音网页获取访问权限，首次约需一两分钟，请稍候…")
+                    status_cb("正在打开抖音网页获取访问权限，首次约需两三分钟，请稍候…")
                 _open_douyin_page()
                 memo.unlink(missing_ok=True)  # 清记忆，重探含刚种 cookies 的浏览器
+                # Edge 运行期间其 cookie 库被独占锁定，探测必然全部失败：
+                # 先固定等落盘，再关闭 Edge 释放库，然后轮询才有意义
+                time.sleep(COOKIE_FLUSH_WAIT_S)
+                _close_edge_browsers()
                 for _ in range(COOKIE_POLL_ROUNDS):
                     time.sleep(COOKIE_POLL_INTERVAL_S)
                     # _resolve_cookies_args 探测成功会顺手把浏览器写回 memo
