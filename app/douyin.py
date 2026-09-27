@@ -1,10 +1,17 @@
 """抖音入口：分享文本中的链接提取 + yt-dlp 下载（含 cookies 自动解析）。"""
+import os
 import re
 import subprocess
 import time
 from pathlib import Path
 
 from app.convert import find_ytdlp
+
+
+def _utf8_env() -> dict[str, str]:
+    """yt-dlp（Python 程序）在管道输出时默认用系统码页（cp936），
+    抖音标题的 emoji 会触发编码错误；强制其 stdio 走 UTF-8。"""
+    return {**os.environ, "PYTHONIOENCODING": "utf-8"}
 
 # 覆盖 v.douyin.com 短链与 www.douyin.com 完整链接
 _DOUYIN_RE = re.compile(r"https?://(?:v\.douyin\.com|www\.douyin\.com)/[A-Za-z0-9._/-]+")
@@ -41,7 +48,8 @@ def _probe_browser(url: str, browser: str) -> bool:
         subprocess.run(
             [find_ytdlp(), "--no-playlist", "--simulate", "--print", "title",
              "--cookies-from-browser", browser, url],
-            check=True, capture_output=True, text=True, timeout=_PROBE_TIMEOUT_S,
+            check=True, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", env=_utf8_env(), timeout=_PROBE_TIMEOUT_S,
         )
         return True
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
@@ -86,6 +94,7 @@ def download_video(
             proc = subprocess.run(
                 [find_ytdlp(), *build_ytdlp_args(url, dest_dir, cookies_args)],
                 check=True, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", env=_utf8_env(),
             )
             lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
             break  # 下载命令成功，跳出重试循环
