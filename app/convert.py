@@ -11,6 +11,9 @@ from app.paths import Layout
 
 logger = logging.getLogger(__name__)
 
+# Windows GUI 程序调控制台子进程（ffmpeg 等）默认各弹一个新控制台窗口；加标志抑制
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
 # 唱戏机适配参数：与已验证可播样本（VLC 默认档）规格一致
 # 44.1kHz / 立体声 / CBR 128k / 不写 ID3 标签
 # ID3 抑制双保险：ffmpeg 9 起移除 -write_id3v2 语义（静默失效，仍写 ID3 头），
@@ -76,6 +79,7 @@ def probe_duration(path: Path) -> float:
         [find_ffprobe(), "-v", "quiet", "-show_entries", "format=duration",
          "-of", "csv=p=0", str(path)],
         check=True, capture_output=True, text=True,
+        creationflags=_NO_WINDOW,
     ).stdout.strip()
     return float(out)
 
@@ -95,7 +99,7 @@ def convert_video(layout: Layout, uuid: str) -> bool:
     try:
         subprocess.run(
             [find_ffmpeg(), *build_ffmpeg_args(str(video_path), str(dst))],
-            check=True, capture_output=True,
+            check=True, capture_output=True, creationflags=_NO_WINDOW,
         )
         src_duration = probe_duration(video_path)
         dst_duration = probe_duration(dst)

@@ -2,10 +2,14 @@
 import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 from app.convert import find_ytdlp
+
+# 同 app/convert：抑制 Windows 上子进程弹控制台窗口
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
 def _utf8_env() -> dict[str, str]:
@@ -50,6 +54,7 @@ def _probe_browser(url: str, browser: str) -> bool:
              "--cookies-from-browser", browser, url],
             check=True, capture_output=True, text=True, encoding="utf-8",
             errors="replace", env=_utf8_env(), timeout=_PROBE_TIMEOUT_S,
+            creationflags=_NO_WINDOW,
         )
         return True
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
@@ -95,6 +100,7 @@ def download_video(
                 [find_ytdlp(), *build_ytdlp_args(url, dest_dir, cookies_args)],
                 check=True, capture_output=True, text=True,
                 encoding="utf-8", errors="replace", env=_utf8_env(),
+                creationflags=_NO_WINDOW,
             )
             lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
             break  # 下载命令成功，跳出重试循环
