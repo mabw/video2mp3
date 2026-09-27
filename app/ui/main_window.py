@@ -124,37 +124,66 @@ class MainWindow:
             w.destroy()
         records = list_videos(self.layout.db_path)
         on_usb = usb_uuids(self.usb_root) if self.usb_root else set()
-        pending = [r for r in records if r.status == "done" and r.uuid not in on_usb]
+        pending = [r for r in records
+                   if r.status == "done" and r.uuid not in on_usb
+                   and r.mp3_path and Path(r.mp3_path).exists()]
         self.pending_label.config(text=f"待传 U 盘：{len(pending)} 个")
-        self.send_btn.config(text=f"发送到 U 盘（{len(pending)} 个）")
         self.check_vars = {}
         for i, rec in enumerate(records):
             self._build_row(i, rec, rec.uuid in on_usb)
+        self._update_send_btn()
+
+    def _update_send_btn(self, *_) -> None:
+        """发送按钮实时显示勾选数（勾一个变一个）。"""
+        if str(self.send_btn.cget("state")) == "disabled":
+            return  # 发送进行中不改"正在发送…"
+        n = sum(v.get() for v in self.check_vars.values())
+        self.send_btn.config(text=f"发送到 U 盘（{n} 个）")
 
     def _build_row(self, i: int, rec, on_usb: bool) -> None:
         row = tk.Frame(self.rows_frame, bg=style.COLOR_ROW_ALT if i % 2 else style.COLOR_BG)
         row.pack(fill="x", pady=2)
-        var = tk.BooleanVar(value=bool(rec.status == "done" and not on_usb))
+        video_ok = bool(rec.video_path and Path(rec.video_path).exists())
+        mp3_ok = bool(rec.mp3_path and Path(rec.mp3_path).exists())
+        file_lost = rec.status == "done" and not mp3_ok  # 本地文件被删/移走
+        var = tk.BooleanVar(value=bool(rec.status == "done" and not on_usb and mp3_ok))
         self.check_vars[rec.uuid] = var
-        tk.Checkbutton(row, variable=var, bg=row["bg"]).pack(side="left", padx=(8, 0))
+        var.trace_add("write", self._update_send_btn)  # 勾选变化实时更新按钮计数
+        tk.Checkbutton(row, variable=var, bg=row["bg"],
+                       state=tk.DISABLED if file_lost else tk.NORMAL
+                       ).pack(side="left", padx=(8, 0))
         duration = f"{rec.duration // 60}分{rec.duration % 60}秒" if rec.duration else ""
-        status = "✓已在U盘" if on_usb else {"pending": "等待中…", "converting": "转换中…",
-                                             "failed": "❌转换失败", "done": ""}.get(rec.status, "")
+        if file_lost:
+            status = "⚠文件丢失"
+        elif on_usb:
+            status = "✓已在U盘"
+        else:
+            status = {"pending": "等待中…", "converting": "转换中…",
+                      "failed": "❌转换失败", "done": ""}.get(rec.status, "")
         text = f"{rec.title}（{duration}）" if duration else rec.title
-        color = style.COLOR_DISABLED if on_usb else style.COLOR_TEXT
+        color = style.COLOR_DISABLED if (on_usb or file_lost) else style.COLOR_TEXT
         tk.Label(row, text=f"{text}  {status}", font=style.FONT_BODY, bg=row["bg"],
                  fg=color).pack(side="left", padx=8, pady=12)
-        if rec.status == "done":
+        if rec.status == "done" and video_ok:
             tk.Button(row, text="▶看视频", font=style.FONT_STATUS,
-                      command=lambda p=rec.video_path or "": plat.play_media(Path(p))
+                      command=lambda p=rec.video_path or "": self._play(p)
                       ).pack(side="right", padx=4, ipady=8)
+        if rec.status == "done" and mp3_ok:
             tk.Button(row, text="♪听音乐", font=style.FONT_STATUS,
-                      command=lambda p=rec.mp3_path or "": plat.play_media(Path(p))
+                      command=lambda p=rec.mp3_path or "": self._play(p)
                       ).pack(side="right", padx=4, ipady=8)
         if rec.status == "failed":
             tk.Button(row, text="重试", font=style.FONT_STATUS,
                       command=lambda u=rec.uuid: self._start_conversion(u)
                       ).pack(side="right", padx=4, ipady=8)
+
+    def _play(self, path: str) -> None:
+        """调系统播放器，文件不在时给人话提示（os.startfile 对缺失路径直接抛错）。"""
+        try:
+            plat.play_media(Path(path))
+        except OSError:
+            messagebox.showerror("出错了", "文件找不到了，可能被删除或移动了。\n"
+                                 "可以重新添加这个视频", parent=self.root)
 
     # ---------- 后台管线 ----------
 
@@ -300,10 +329,18 @@ class MainWindow:
         if not chosen:
             messagebox.showinfo("提示", "请先勾选要发送的视频", parent=self.root)
             return
+        missing = [r for r in chosen if not (r.mp3_path and Path(r.mp3_path).exists())]
+        if missing:
+            messagebox.showwarning(
+                "文件丢失",
+                f"有 {len(missing)} 个文件在电脑上找不到了\n（可能被删除或移动）。\n"
+                "列表里标「⚠文件丢失」的就是，请重新添加。", parent=self.root)
+            return
         try:
             sizes = [Path(r.mp3_path or "").stat().st_size for r in chosen]
-        except OSError:  # 拔盘/文件被移走的窄窗口：与 _poll_usb 同款容错
-            messagebox.showinfo("提示", "U 盘已拔出，请重新插上", parent=self.root)
+        except OSError:  # 极窄窗口内被删：与上面同款提示
+            messagebox.showwarning(
+                "文件丢失", "文件在电脑上找不到了，请重新添加", parent=self.root)
             return
         size_mb = sum(sizes) / 1024**2
         if not messagebox.askyesno(
