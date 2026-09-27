@@ -112,5 +112,5 @@ def hook_drop_files(window, callback) -> bool:
         return False
     import windnd
 
-    windnd.hook_drop_files(window, func=callback)
+    windnd.hook_dropfiles(window, func=callback)
     return True
