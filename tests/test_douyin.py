@@ -252,9 +252,10 @@ def test_open_douyin_page_picks_existing_edge_path(monkeypatch):
     monkeypatch.setattr(douyin.sys, "platform", "win32")
 
     def fake_isfile(p):
-        # mac 上 expandvars 不展开 %VAR%，候选路径保持字面量，按候选序号区分：
-        # 只让第二个候选（非 x86 的 Program Files）存在
-        return "ProgramFiles" in p and "(x86)" not in p
+        # 只让非 x86 候选"存在"。判断只看 (x86) 有无——不碰路径展开形态：
+        # mac 上 %VAR% 不展开是字面量，Windows CI 上展开成 C:\Program Files\...，
+        # 按展开形态匹配会让两个平台的断言分叉（CI 已踩过一次）
+        return "(x86)" not in p
 
     monkeypatch.setattr(douyin.os.path, "isfile", fake_isfile)
     monkeypatch.setattr(webbrowser, "register",
