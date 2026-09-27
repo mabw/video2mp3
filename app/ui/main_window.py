@@ -9,6 +9,7 @@ from tkinter import messagebox, ttk
 from app import platform as plat
 from app.__version__ import __version__
 from app.convert import convert_video
+from app.cookie_sync import start_sync_server
 from app.db import delete_video, list_videos
 from app.douyin import download_video, extract_douyin_url
 from app.inbox import intake_file, scan_inbox
@@ -50,6 +51,9 @@ class MainWindow:
         self._build_link_area()
         self._build_list_area()
         self._build_usb_area()
+
+        # 本地 cookie 同步服务：接收浏览器扩展上报（装扩展后抖音下载全自动）
+        start_sync_server(self.layout.root / "cookies.txt")
 
         plat.hook_drop_files(self.root, self._on_drop_files)
 

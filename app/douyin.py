@@ -1,4 +1,9 @@
-"""抖音入口：分享文本中的链接提取 + yt-dlp 下载（含 cookies 自动解析）。"""
+"""抖音入口：链接提取 + yt-dlp 下载。cookies 完全由浏览器扩展自动供给。
+
+扩展运行在浏览器内部（明文 cookie、无文件锁、无 DPAPI 加密问题），
+打开抖音页即把 cookie 上报给本地同步服务（app.cookie_sync）落盘为
+数据根 cookies.txt，yt-dlp 通过 --cookies 使用。
+"""
 import logging
 import os
 import re
@@ -14,45 +19,30 @@ logger = logging.getLogger(__name__)
 # 同 app/convert：抑制 Windows 上子进程弹控制台窗口
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
+# 扩展从页面加载到上报的全程上限（页面加载完成后 5 秒即上报，此为宽松兜底）
+COOKIE_WAIT_S = 120
+
+# 覆盖 v.douyin.com 短链与 www.douyin.com 完整链接
+_DOUYIN_RE = re.compile(r"https?://(?:v\.douyin\.com|www\.douyin\.com)/[A-Za-z0-9._/-]+")
+
+# 打开抖音页用的浏览器候选（Windows）：Edge 系统自带优先，Chrome 次之。
+# 只用于"让扩展抓 cookie"，cookie 读取不走浏览器库，无加密/锁问题
+_BROWSER_CANDIDATES = {
+    "edge": [
+        r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe",
+        r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe",
+    ],
+    "chrome": [
+        r"%ProgramFiles%\Google\Chrome\Application\chrome.exe",
+        r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe",
+    ],
+}
+
 
 def _utf8_env() -> dict[str, str]:
     """yt-dlp（Python 程序）在管道输出时默认用系统码页（cp936），
     抖音标题的 emoji 会触发编码错误；强制其 stdio 走 UTF-8。"""
     return {**os.environ, "PYTHONIOENCODING": "utf-8"}
-
-# 覆盖 v.douyin.com 短链与 www.douyin.com 完整链接
-_DOUYIN_RE = re.compile(r"https?://(?:v\.douyin\.com|www\.douyin\.com)/[A-Za-z0-9._/-]+")
-
-# 自动探测顺序：Edge 是 Windows 自带（老人机最可能有），Chrome 加密最难放最后
-_PROBE_BROWSERS = ("edge", "chrome", "firefox")
-_PROBE_TIMEOUT_S = 30
-# 打开抖音网页种下匿名 cookies 后，浏览器要过一阵才把 cookies 批量写入磁盘
-# （mac 实测 25 秒时还没落盘、150 秒时已落盘；Windows 真机观测 90 秒仍不够，
-# 加大窗口并轮询探测，一旦成功立即中止）
-COOKIE_POLL_INTERVAL_S = 20
-COOKIE_POLL_ROUNDS = 8  # 最多 8 轮 × 20 秒 ≈ 160 秒
-# Edge 把 cookies 写入磁盘的周期约 30 秒：先固定等它落盘，再关闭 Edge 释放
-# cookie 库（Edge 运行中 Windows 上独占锁定该库，yt-dlp 复制不了——真机日志
-# "Could not copy Chrome cookie database" 实证），然后才轮询探测
-COOKIE_FLUSH_WAIT_S = 75
-
-
-def _close_edge_browsers() -> None:
-    """关闭本用户的 Edge 进程以释放被独占的 cookie 数据库（仅 Windows）。
-
-    仅在"软件自己打开 Edge 种 cookie → 等落盘"之后调用：此刻 cookie 已
-    持久化，强杀不丢数据。老人机场景下 Edge 通常只开着我们打开的抖音页。
-    """
-    if sys.platform != "win32":
-        return
-    try:
-        subprocess.run(
-            ["taskkill", "/F", "/IM", "msedge.exe"],
-            check=False, capture_output=True, creationflags=_NO_WINDOW,
-        )
-        logger.info("[douyin] 已尝试关闭 Edge 释放 cookie 库")
-    except OSError as exc:  # taskkill 不存在等极端情况：不影响主流程
-        logger.warning("[douyin] 关闭 Edge 失败（不影响继续探测）: %s", exc)
 
 
 def extract_douyin_url(text: str) -> str | None:
@@ -75,69 +65,43 @@ def build_ytdlp_args(url: str, dest_dir: Path, cookies_args: list[str] | None = 
     return args
 
 
-def _probe_browser(url: str, browser: str) -> bool:
-    """轻量探测该浏览器的 cookies 是否够过抖音风控：--simulate 只解析不下载。"""
-    try:
-        subprocess.run(
-            [find_ytdlp(), "--no-playlist", "--simulate", "--print", "title",
-             "--cookies-from-browser", browser, url],
-            check=True, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", env=_utf8_env(), timeout=_PROBE_TIMEOUT_S,
-            creationflags=_NO_WINDOW,
-        )
-        return True
-    except subprocess.CalledProcessError as exc:
-        # 失败原因必须落日志：锁/解密失败/cookies 未落盘三种命运的修法完全不同
-        tail = "\n".join((exc.stderr or "").strip().splitlines()[-3:])
-        logger.warning("[douyin] 探测 %s 失败:\n%s", browser, tail)
-        return False
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        logger.warning("[douyin] 探测 %s 异常: %s", browser, exc)
-        return False
-
-
-def _resolve_cookies_args(url: str, cookies_file: Path | None, memo: Path) -> list[str]:
-    """cookies 来源解析：cookies.txt 文件 > 记住的浏览器 > 探测 > 裸跑。"""
-    if cookies_file is not None and cookies_file.exists():
-        return ["--cookies", str(cookies_file)]
-    if memo.exists():
-        browser = memo.read_text(encoding="utf-8").strip()
-        if browser:
-            return ["--cookies-from-browser", browser]
-    for browser in _PROBE_BROWSERS:
-        if _probe_browser(url, browser):
-            memo.write_text(browser, encoding="utf-8")  # 记住，下次免探测
-            return ["--cookies-from-browser", browser]
-    return []  # 裸跑：可能风控失败，UI 提示走微信兜底
-
-
 def _open_douyin_page() -> None:
-    """用 Edge 显式打开抖音页（Windows）：默认浏览器可能是 360/QQ 等套壳，
-    种下的 cookies yt-dlp 读不到；Edge 系统自带且在探测列表首位。
-    Edge 定位/启动失败时退回默认浏览器。
-    """
+    """打开抖音首页，触发扩展上报 cookie（Windows 用 Edge/Chrome）。"""
     import webbrowser
 
     if sys.platform == "win32":
-        # Edge 实际安装位置两种都有（64 位机常见 Program Files），先验证存在再用：
-        # 路径不存在时 register 不会报错，open 才失败——那时已悄悄退回默认浏览器白种一轮
-        candidates = [
-            os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
-            os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
-        ]
-        edge_exe = next((p for p in candidates if os.path.isfile(p)), None)
-        if edge_exe is not None:
+        for name, candidates in _BROWSER_CANDIDATES.items():
+            exe = next((os.path.expandvars(c) for c in candidates
+                        if os.path.isfile(os.path.expandvars(c))), None)
+            if exe is None:
+                continue
             try:
-                webbrowser.register("v2m_edge", None,
-                                    webbrowser.BackgroundBrowser(edge_exe))
-                webbrowser.get("v2m_edge").open("https://www.douyin.com/")
+                webbrowser.register(f"v2m_{name}", None,
+                                    webbrowser.BackgroundBrowser(exe))
+                webbrowser.get(f"v2m_{name}").open("https://www.douyin.com/")
                 return
             except (OSError, webbrowser.Error):
-                logger.warning("[douyin] Edge 启动失败，退回默认浏览器", exc_info=True)
-        else:
-            logger.warning("[douyin] 未找到 msedge.exe（尝试过 %s），退回默认浏览器",
-                           candidates)
+                logger.warning("[douyin] 用 %s 打开抖音页失败（%s）", name, exe,
+                               exc_info=True)
+        logger.warning("[douyin] 未找到 Edge/Chrome，退回默认浏览器")
     webbrowser.open("https://www.douyin.com/")
+
+
+def _wait_cookies_file(cookies_file: Path | None) -> bool:
+    """等待扩展刷新 cookies.txt（mtime 变新即成功）。超时返回 False。"""
+    if cookies_file is None:
+        return False
+    mtime0 = cookies_file.stat().st_mtime if cookies_file.exists() else 0.0
+    deadline = time.monotonic() + COOKIE_WAIT_S
+    while time.monotonic() < deadline:
+        time.sleep(5)
+        try:
+            if cookies_file.exists() and cookies_file.stat().st_mtime > mtime0:
+                logger.info("[douyin] 扩展已刷新 %s", cookies_file)
+                return True
+        except OSError:  # 恰好读到 .part 替换的空档：下一轮再看
+            continue
+    return False
 
 
 def download_video(
@@ -150,15 +114,13 @@ def download_video(
 
     从 stdout 拿确切产物路径（收件箱是多入口共享目录，不能按 mtime 猜文件）；
     标题用于替代不可读的数字 id。失败抛 CalledProcessError，由 UI 转人话提示。
-    cookies 自动解析：数据根的 cookies.txt（插件导出）优先，否则从本机浏览器
-    读取（探测成功的浏览器记在数据根的 cookies_source，失败自动清掉重探）。
-    若因 cookies 缺失失败：自动打开一次抖音网页（种下匿名 cookies），轮询
-    等待浏览器把 cookies 写入磁盘后重试一轮（status_cb 报告等待状态），仍失败才抛出。
+    cookies 由浏览器扩展自动落盘到 cookies_file；因失效下载失败时自动打开
+    抖音页触发扩展重新上报，等文件刷新后重试一轮（status_cb 报告状态）。
     """
-    memo = dest_dir.parent / "cookies_source"
     lines: list[str] = []  # 循环内成功路径必赋值；此处初始化仅为静态分析
     for attempt in range(2):
-        cookies_args = _resolve_cookies_args(url, cookies_file, memo)
+        cookies_args = (["--cookies", str(cookies_file)]
+                        if cookies_file is not None and cookies_file.exists() else [])
         try:
             proc = subprocess.run(
                 [find_ytdlp(), *build_ytdlp_args(url, dest_dir, cookies_args)],
@@ -170,25 +132,14 @@ def download_video(
             break  # 下载命令成功，跳出重试循环
         except subprocess.CalledProcessError as exc:
             stderr = (exc.stderr or "") + (exc.stdout or "")
-            # stderr 落日志：真机上"获取不到权限"的具体原因（锁/解密/风控）全在这里
+            # stderr 落日志：真机上失败的具体原因（cookie 失效/网络/风控）全在这里
             logger.error("[douyin] yt-dlp 第 %d 次尝试失败:\n%s", attempt + 1, stderr)
             if attempt == 0 and "cookie" in stderr.lower():
-                # cookies 缺失：打开抖音网页种匿名 cookies，等落盘后关浏览器再探测
                 if status_cb is not None:
-                    status_cb("正在打开抖音网页获取访问权限，首次约需两三分钟，请稍候…")
+                    status_cb("正在自动获取抖音访问权限，可能弹出抖音页面，请稍候…")
                 _open_douyin_page()
-                memo.unlink(missing_ok=True)  # 清记忆，重探含刚种 cookies 的浏览器
-                # Edge 运行期间其 cookie 库被独占锁定，探测必然全部失败：
-                # 先固定等落盘，再关闭 Edge 释放库，然后轮询才有意义
-                time.sleep(COOKIE_FLUSH_WAIT_S)
-                _close_edge_browsers()
-                for _ in range(COOKIE_POLL_ROUNDS):
-                    time.sleep(COOKIE_POLL_INTERVAL_S)
-                    # _resolve_cookies_args 探测成功会顺手把浏览器写回 memo
-                    if _resolve_cookies_args(url, cookies_file, memo):
-                        break
-                continue  # 进入第二轮：无论轮询是否探到，都再试一次下载
-            memo.unlink(missing_ok=True)  # 失败清浏览器记忆：下次重新探测
+                _wait_cookies_file(cookies_file)
+                continue  # 第二轮：扩展刷新了 cookies.txt 就能过
             raise
     if len(lines) < 2:
         raise RuntimeError("yt-dlp 未返回产物路径")

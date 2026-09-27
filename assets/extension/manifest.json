@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "视频管家 cookie 助手",
+  "version": "1.0",
+  "description": "打开抖音页面时，自动把访问权限同步给视频管家（仅本机 127.0.0.1）",
+  "permissions": ["cookies", "tabs"],
+  "host_permissions": ["https://*.douyin.com/", "http://127.0.0.1:18642/"],
+  "background": { "service_worker": "background.js" }
+}
