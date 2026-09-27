@@ -49,6 +49,20 @@ def _utf8_env() -> dict[str, str]:
     return {**os.environ, "PYTHONIOENCODING": "utf-8"}
 
 
+def _decode_stream(data: bytes | str) -> str:
+    """yt-dlp stdout 的实际编码不可控：打包版 exe 可能无视 PYTHONIOENCODING
+    仍按系统码页（Windows 中文 = GBK）输出中文路径（真机实测踩过，路径乱码
+    导致产物检查失败）。按字节双解码兜底：先严格 UTF-8，失败退 GBK。"""
+    if isinstance(data, str):  # 测试桩或已解码
+        return data
+    for enc in ("utf-8", "gbk"):
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
 def extract_douyin_url(text: str) -> str | None:
     """从任意分享文本中提取第一个抖音链接；无则返回 None。"""
     m = _DOUYIN_RE.search(text or "")
@@ -79,12 +93,17 @@ def _find_browser_exe() -> str | None:
     return None
 
 
-def _seed_via_temp_browser(ext_dir: Path) -> subprocess.Popen | None:
-    """启动临时浏览器实例（独立 profile + 内置扩展）访问抖音，返回进程。
+# 临时实例的 profile 目录名：同时是"哪些进程属于临时实例"的唯一识别特征
+TEMP_PROFILE_NAME = "v2m_browser_profile"
+
+
+def _seed_via_temp_browser(ext_dir: Path) -> None:
+    """启动临时浏览器实例（独立 profile + 内置扩展）访问抖音。
 
     免安装路线：不碰用户浏览器 profile，不要求装扩展——软件自带扩展目录，
     --load-extension 挂到临时实例上；cookie 由扩展上报本地服务落盘。
-    用完由调用方 terminate() 精确关闭，绝不影响用户自己开着的浏览器。
+    用完由 _close_temp_browser() 按特征精确关闭，不影响用户开着的浏览器。
+    找不到/启动失败时退回默认浏览器打开（该路径需手动装扩展兜底）。
     """
     exe = _find_browser_exe()
     if exe is None:
@@ -92,11 +111,11 @@ def _seed_via_temp_browser(ext_dir: Path) -> subprocess.Popen | None:
         import webbrowser
 
         webbrowser.open("https://www.douyin.com/")
-        return None
-    profile = Path(tempfile.gettempdir()) / "v2m_browser_profile"  # 固定目录可复用
+        return
+    profile = Path(tempfile.gettempdir()) / TEMP_PROFILE_NAME  # 固定目录可复用
     profile.mkdir(exist_ok=True)
     try:
-        proc = subprocess.Popen(
+        subprocess.Popen(
             [exe,
              f"--user-data-dir={profile}",
              f"--load-extension={ext_dir}",
@@ -105,14 +124,37 @@ def _seed_via_temp_browser(ext_dir: Path) -> subprocess.Popen | None:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             creationflags=_NO_WINDOW,
         )
-        return proc
     except OSError:
         logger.warning("[douyin] 启动临时浏览器失败（%s），退回默认浏览器", exe,
                        exc_info=True)
         import webbrowser
 
         webbrowser.open("https://www.douyin.com/")
-        return None
+
+
+def _close_temp_browser() -> None:
+    """按 profile 特征精确定向关闭临时浏览器实例的全部进程。
+
+    不能用 Popen 句柄 terminate：Windows 上若已有 Edge 实例，新启动的
+    msedge.exe 只是把 URL 转交既有进程树后自己退出，窗口不属于我们的句柄
+    （真机实测：cookie 到了但窗口关不掉）。临时实例的每个进程命令行都带
+    --user-data-dir=<TEMP>\\v2m_browser_profile，按此特征逐个精确终止；
+    用户自己开着的浏览器不带该参数，绝无误伤。
+    """
+    try:
+        if sys.platform == "win32":
+            ps_cmd = ("Get-CimInstance Win32_Process | Where-Object "
+                      "{$_.CommandLine -like '*v2m_browser_profile*'} | "
+                      "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }")
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
+                check=False, capture_output=True, creationflags=_NO_WINDOW)
+        else:
+            subprocess.run(["pkill", "-f", TEMP_PROFILE_NAME],
+                           check=False, capture_output=True)
+        logger.info("[douyin] 已按特征关闭临时浏览器实例")
+    except OSError as exc:
+        logger.warning("[douyin] 关闭临时浏览器失败（不影响下载）: %s", exc)
 
 
 def _wait_cookies_file(cookies_file: Path | None) -> bool:
@@ -167,28 +209,28 @@ def download_video(
         cookies_args = (["--cookies", str(cookies_file)]
                         if cookies_file is not None and cookies_file.exists() else [])
         try:
+            # 字节接收 + 双解码：见 _decode_stream（编码不可控，str 模式会踩乱码）
             proc = subprocess.run(
                 [find_ytdlp(), *build_ytdlp_args(url, dest_dir, cookies_args)],
-                check=True, capture_output=True, text=True,
-                encoding="utf-8", errors="replace", env=_utf8_env(),
+                check=True, capture_output=True, env=_utf8_env(),
                 creationflags=_NO_WINDOW,
             )
-            lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+            lines = [ln.strip() for ln in _decode_stream(proc.stdout).splitlines()
+                     if ln.strip()]
             break  # 下载命令成功，跳出重试循环
         except subprocess.CalledProcessError as exc:
-            stderr = (exc.stderr or "") + (exc.stdout or "")
+            stderr = _decode_stream(exc.stderr or b"") + _decode_stream(exc.stdout or b"")
             # stderr 落日志：真机上失败的具体原因（cookie 失效/网络/风控）全在这里
             logger.error("[douyin] yt-dlp 第 %d 次尝试失败:\n%s", attempt + 1, stderr)
             if attempt == 0 and "cookie" in stderr.lower():
                 if status_cb is not None:
                     status_cb("正在自动获取抖音访问权限，可能弹出抖音页面，请稍候…")
-                proc = _seed_via_temp_browser(asset_path("extension"))
                 try:
+                    _seed_via_temp_browser(asset_path("extension"))
                     _wait_cookies_file(cookies_file)
                 finally:
-                    if proc is not None:
-                        # 只关我们自己启动的临时实例，不碰用户开着的浏览器
-                        proc.terminate()
+                    # 按特征精确定向关闭：只关临时实例，用户浏览器不受影响
+                    _close_temp_browser()
                 continue  # 第二轮：扩展刷新了 cookies.txt 就能过
             raise
     if len(lines) < 2:
