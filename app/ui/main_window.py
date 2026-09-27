@@ -97,14 +97,12 @@ class MainWindow:
     def _build_usb_area(self) -> None:
         frame = tk.Frame(self.root, bg=style.COLOR_BG)
         frame.pack(fill="x", padx=16, pady=(8, 16))
+        # 第一行：U 盘状态文本（长卷标自动换行，不挤压按钮）
         self.usb_var = tk.StringVar(value="请把 U 盘插上")
         tk.Label(frame, textvariable=self.usb_var, font=style.FONT_BODY,
-                 bg=style.COLOR_BG).pack(side="left", anchor="w")
-        # 设置按钮：小字灰色放角落（子女用的低频操作，老人不易误触）
-        tk.Button(frame, text="设置", font=style.FONT_STATUS,
-                  fg="#888888", bd=0, bg=style.COLOR_BG,
-                  activeforeground=style.COLOR_TEXT,
-                  command=self._on_set_data_home).pack(side="right", anchor="n")
+                 bg=style.COLOR_BG, wraplength=880, justify="left",
+                 anchor="w").pack(fill="x")
+        # 第二行：发送/整理大按钮 + 右侧设置小按钮（子女用，低频）
         btns = tk.Frame(frame, bg=style.COLOR_BG)
         btns.pack(fill="x", pady=(10, 0))
         self.send_btn = tk.Button(btns, text="发送到 U 盘", font=style.FONT_BUTTON,
@@ -114,6 +112,10 @@ class MainWindow:
                   bg=style.COLOR_MANAGE, fg="white",
                   command=self._on_manage).pack(side="left", padx=(12, 0),
                                                 ipadx=28, ipady=12, expand=True, fill="x")
+        tk.Button(btns, text="设置", font=style.FONT_STATUS,
+                  fg="#888888", bd=0, bg=style.COLOR_BG,
+                  activeforeground=style.COLOR_TEXT,
+                  command=self._on_set_data_home).pack(side="right", padx=(8, 0), ipady=6)
 
     # ---------- 清单渲染 ----------
 
