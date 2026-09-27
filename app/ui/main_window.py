@@ -25,6 +25,17 @@ USB_POLL_MS = 3000        # U 盘轮询间隔
 INBOX_POLL_MS = 5000      # 收件箱轮询间隔（软件常开时新存入的视频也要被发现）
 QUEUE_POLL_MS = 200       # 后台事件出队间隔
 
+# 记住窗口尺寸的文件（数据根下，跟「数据目录.txt」同风格的中文文件名）
+WINDOW_SIZE_FILE = "窗口尺寸.txt"
+
+
+def _read_saved_size(path: Path) -> str | None:
+    """读上次窗口尺寸；文件不存在/读不了返回 None（用默认尺寸）。"""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
 
 class MainWindow:
     def __init__(self, layout: Layout) -> None:
@@ -37,7 +48,13 @@ class MainWindow:
 
         self.root = tk.Tk()
         self.root.title(f"视频管家 v{__version__}")
-        self.root.geometry("980x720")
+        # 尺寸 = 上次关闭时记住的大小（子女调好一次就一直生效），无记录用默认
+        size = style.resolve_window_size(
+            _read_saved_size(self.layout.root / "窗口尺寸.txt"),
+            self.root.winfo_screenwidth(), self.root.winfo_screenheight())
+        self.root.geometry(f"{size[0]}x{size[1]}")
+        self.root.minsize(*style.MIN_WINDOW_SIZE)
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.configure(bg=style.COLOR_BG)
         # Tk 回调异常不走 sys.excepthook；--windowed 打包下 stderr 为 None，
         # 默认处理会直接闪退。重定向到日志，保证任何回调异常都留痕不崩。
@@ -68,6 +85,16 @@ class MainWindow:
         import traceback
 
         logger.error("[tk] 回调异常:\n%s", "".join(traceback.format_exception(exc, val, tb)))
+
+    def _on_close(self) -> None:
+        """点窗口 ×：先把当前尺寸记到数据目录再退出（下次打开沿用）。"""
+        try:
+            (self.layout.root / WINDOW_SIZE_FILE).write_text(
+                f"{self.root.winfo_width()}x{self.root.winfo_height()}",
+                encoding="utf-8")
+        except OSError:
+            logger.warning("[ui] 窗口尺寸保存失败（不影响退出）", exc_info=True)
+        self.root.destroy()
 
     # ---------- 界面构建 ----------
 
