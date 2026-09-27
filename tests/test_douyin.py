@@ -157,3 +157,43 @@ def test_download_video_retries_after_browser_open(monkeypatch, tmp_path):
     assert any(a.startswith("sleep") for a in actions)
     assert hints                                 # UI 收到等待提示
     assert title == "标题"
+
+
+def test_download_video_polling_stops_early(monkeypatch, tmp_path):
+    """cookies 落盘后轮询提前中止：第 3 轮探测成功即停，不空等满 6 轮。"""
+    import subprocess as real_subprocess
+    import webbrowser
+
+    from app import douyin
+
+    mp4 = tmp_path / "abc.mp4"
+    mp4.write_bytes(b"x" * 8)
+    monkeypatch.setattr(douyin.time, "sleep", lambda s: None)
+    monkeypatch.setattr(webbrowser, "open", lambda u: True)
+    calls = {"resolve": 0, "run": 0}
+
+    def fake_resolve(*a):
+        calls["resolve"] += 1
+        # 下载前 1 次 + 轮询 3 次都未落盘，第 4 次（轮询第 3 轮）成功
+        return [] if calls["resolve"] < 4 else ["--cookies-from-browser", "edge"]
+
+    monkeypatch.setattr(douyin, "_resolve_cookies_args", fake_resolve)
+
+    class FakeProc:
+        stdout = f"标题\n{mp4}\n"
+
+    def fake_run(cmd, check, capture_output, text=True, timeout=None,
+                 encoding=None, errors=None, env=None, creationflags=0):
+        calls["run"] += 1
+        if calls["run"] == 1:
+            exc = real_subprocess.CalledProcessError(1, cmd)
+            exc.stderr = "ERROR: Fresh cookies are needed"
+            raise exc
+        return FakeProc()
+
+    monkeypatch.setattr(douyin.subprocess, "run", fake_run)
+    monkeypatch.setattr(douyin, "find_ytdlp", lambda: "yt-dlp")
+    path, title = douyin.download_video("https://v.douyin.com/x/", tmp_path)
+    assert (path, title) == (mp4, "标题")
+    # 首轮解析 1 + 轮询 3 + 第二轮下载前解析 1 = 5 次（跑满会是 8 次）
+    assert calls["resolve"] == 5

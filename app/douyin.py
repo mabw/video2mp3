@@ -1,4 +1,5 @@
 """抖音入口：分享文本中的链接提取 + yt-dlp 下载（含 cookies 自动解析）。"""
+import logging
 import os
 import re
 import subprocess
@@ -7,6 +8,8 @@ import time
 from pathlib import Path
 
 from app.convert import find_ytdlp
+
+logger = logging.getLogger(__name__)
 
 # 同 app/convert：抑制 Windows 上子进程弹控制台窗口
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
@@ -23,7 +26,10 @@ _DOUYIN_RE = re.compile(r"https?://(?:v\.douyin\.com|www\.douyin\.com)/[A-Za-z0-
 # 自动探测顺序：Edge 是 Windows 自带（老人机最可能有），Chrome 加密最难放最后
 _PROBE_BROWSERS = ("edge", "chrome", "firefox")
 _PROBE_TIMEOUT_S = 30
-BROWSER_OPEN_WAIT_S = 20  # 打开抖音网页后等待 cookies 生效的秒数
+# 打开抖音网页种下匿名 cookies 后，浏览器要过一阵才把 cookies 批量写入磁盘
+# （实测 25 秒时还没落盘、150 秒时已落盘），因此轮询探测而非固定等待
+COOKIE_POLL_INTERVAL_S = 15
+COOKIE_POLL_ROUNDS = 6  # 最多 6 轮 × 15 秒 ≈ 90 秒，一旦探测成功立即中止
 
 
 def extract_douyin_url(text: str) -> str | None:
@@ -88,8 +94,8 @@ def download_video(
     标题用于替代不可读的数字 id。失败抛 CalledProcessError，由 UI 转人话提示。
     cookies 自动解析：数据根的 cookies.txt（插件导出）优先，否则从本机浏览器
     读取（探测成功的浏览器记在数据根的 cookies_source，失败自动清掉重探）。
-    若因 cookies 缺失失败：自动打开一次抖音网页（种下匿名 cookies）等待
-    页面生效后重试一轮（status_cb 用于向 UI 报告等待状态），仍失败才抛出。
+    若因 cookies 缺失失败：自动打开一次抖音网页（种下匿名 cookies），轮询
+    等待浏览器把 cookies 写入磁盘后重试一轮（status_cb 报告等待状态），仍失败才抛出。
     """
     memo = dest_dir.parent / "cookies_source"
     lines: list[str] = []  # 循环内成功路径必赋值；此处初始化仅为静态分析
@@ -106,16 +112,22 @@ def download_video(
             break  # 下载命令成功，跳出重试循环
         except subprocess.CalledProcessError as exc:
             stderr = (exc.stderr or "") + (exc.stdout or "")
+            # stderr 落日志：真机上"获取不到权限"的具体原因（锁/解密/风控）全在这里
+            logger.error("[douyin] yt-dlp 第 %d 次尝试失败:\n%s", attempt + 1, stderr)
             if attempt == 0 and "cookie" in stderr.lower():
-                # cookies 缺失：打开抖音网页种匿名 cookies，稍候重试
+                # cookies 缺失：打开抖音网页种匿名 cookies，轮询等它落盘
                 if status_cb is not None:
-                    status_cb("正在打开抖音网页获取访问权限，请稍等十几秒…")
+                    status_cb("正在打开抖音网页获取访问权限，首次约需一两分钟，请稍候…")
                 import webbrowser
 
                 webbrowser.open("https://www.douyin.com/")
-                time.sleep(BROWSER_OPEN_WAIT_S)
                 memo.unlink(missing_ok=True)  # 清记忆，重探含刚种 cookies 的浏览器
-                continue
+                for _ in range(COOKIE_POLL_ROUNDS):
+                    time.sleep(COOKIE_POLL_INTERVAL_S)
+                    # _resolve_cookies_args 探测成功会顺手把浏览器写回 memo
+                    if _resolve_cookies_args(url, cookies_file, memo):
+                        break
+                continue  # 进入第二轮：无论轮询是否探到，都再试一次下载
             memo.unlink(missing_ok=True)  # 失败清浏览器记忆：下次重新探测
             raise
     if len(lines) < 2:
