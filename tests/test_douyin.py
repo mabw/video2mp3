@@ -87,7 +87,8 @@ def test_download_video_parses_print_output(monkeypatch, tmp_path):
     class FakeProc:
         stdout = f"好听的歌\n{mp4}\n"
 
-    def fake_run(cmd, check, capture_output, text=True, timeout=None):
+    def fake_run(cmd, check, capture_output, text=True, timeout=None,
+                 encoding=None, errors=None, env=None):
         return FakeProc()
 
     monkeypatch.setattr(douyin.subprocess, "run", fake_run)
@@ -107,7 +108,8 @@ def test_download_video_raises_on_missing_output(monkeypatch, tmp_path):
     class FakeProc:
         stdout = "标题\n/不存在的路径/xxx.mp4\n"
 
-    def fake_run(cmd, check, capture_output, text=True, timeout=None):
+    def fake_run(cmd, check, capture_output, text=True, timeout=None,
+                 encoding=None, errors=None, env=None):
         return FakeProc()
 
     monkeypatch.setattr(douyin.subprocess, "run", fake_run)
@@ -136,7 +138,8 @@ def test_download_video_retries_after_browser_open(monkeypatch, tmp_path):
     class FakeProc:
         stdout = f"标题\n{mp4}\n"
 
-    def fake_run(cmd, check, capture_output, text=True, timeout=None):
+    def fake_run(cmd, check, capture_output, text=True, timeout=None,
+                 encoding=None, errors=None, env=None):
         calls["n"] += 1
         if calls["n"] == 1:
             exc = real_subprocess.CalledProcessError(1, cmd)
