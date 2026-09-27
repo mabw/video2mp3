@@ -81,3 +81,9 @@ def list_videos(db_path: Path) -> list[VideoRecord]:
             f"SELECT {_COLUMNS} FROM videos ORDER BY created_at DESC, uuid DESC"
         ).fetchall()
     return [VideoRecord(**dict(r)) for r in rows]
+
+
+def delete_video(db_path: Path, uuid: str) -> None:
+    """删除条目；不存在时静默跳过（与 update_status 的容忍语义一致）。"""
+    with _connect(db_path) as conn:
+        conn.execute("DELETE FROM videos WHERE uuid = ?", (uuid,))

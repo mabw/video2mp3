@@ -8,8 +8,6 @@ from app.paths import Layout
 from app.ui import style
 from app.usb import delete_files, match_usb_items
 
-COLOR_DELETE = "#c0392b"  # 删除按钮红色，与主窗口的下载/发送按钮区分
-
 
 def open_usb_window(
     parent: tk.Misc, layout: Layout, usb_root: Path, on_changed: Callable[[], None]
@@ -75,7 +73,7 @@ def open_usb_window(
     btns.pack(fill="x", padx=16, pady=16)
 
     del_btn = tk.Button(btns, text="🗑 删除所选（0 首）", font=style.FONT_BUTTON,
-                        bg=COLOR_DELETE, fg="white", command=on_delete)
+                        bg=style.COLOR_DELETE, fg="white", command=on_delete)
     del_btn.pack(side="left", ipadx=24, ipady=12, expand=True, fill="x")
     tk.Button(btns, text="完成", font=style.FONT_BUTTON, bg=style.COLOR_MANAGE,
               fg="white", command=win.destroy).pack(side="left", padx=(12, 0),

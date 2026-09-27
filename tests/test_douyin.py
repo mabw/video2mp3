@@ -150,8 +150,8 @@ def test_download_video_retries_after_browser_open(monkeypatch, tmp_path):
     monkeypatch.setattr(douyin.subprocess, "run", fake_run)
     monkeypatch.setattr(douyin, "find_ytdlp", lambda: "yt-dlp")
     hints = []
-    path, title = douyin.download_video("https://v.douyin.com/x/", tmp_path,
-                                        status_cb=hints.append)
+    _path, title = douyin.download_video("https://v.douyin.com/x/", tmp_path,
+                                         status_cb=hints.append)
     assert calls["n"] == 2                       # 重试了一轮
     assert any("douyin.com" in a for a in actions)  # 打开了抖音网页
     assert any(a.startswith("sleep") for a in actions)

@@ -1,7 +1,7 @@
 """SQLite 映射库测试。"""
 import sqlite3
 
-from app.db import init_db, insert_video, list_videos, update_status
+from app.db import delete_video, init_db, insert_video, list_videos, update_status
 
 
 def test_list_videos_tolerates_legacy_columns(layout):
@@ -38,4 +38,20 @@ def test_update_status_marks_done(layout):
 def test_update_status_missing_record_is_noop(layout):
     init_db(layout.db_path)
     update_status(layout.db_path, "nope", "failed")  # 不抛异常
+    assert list_videos(layout.db_path) == []
+
+
+def test_delete_video(layout):
+    """删除条目：目标消失，其他条目不受影响。"""
+    init_db(layout.db_path)
+    insert_video(layout.db_path, "u1", "歌一", "/v/u1.mp4", "manual")
+    insert_video(layout.db_path, "u2", "歌二", "/v/u2.mp4", "manual")
+    delete_video(layout.db_path, "u1")
+    assert [r.uuid for r in list_videos(layout.db_path)] == ["u2"]
+
+
+def test_delete_video_missing_is_noop(layout):
+    """删除不存在的条目不抛异常（与 update_status 的容忍语义一致）。"""
+    init_db(layout.db_path)
+    delete_video(layout.db_path, "nope")  # 不抛
     assert list_videos(layout.db_path) == []

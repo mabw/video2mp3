@@ -8,7 +8,7 @@ from tkinter import messagebox, ttk
 
 from app import platform as plat
 from app.convert import convert_video
-from app.db import list_videos
+from app.db import delete_video, list_videos
 from app.douyin import download_video, extract_douyin_url
 from app.inbox import intake_file, scan_inbox
 from app.paths import Layout, asset_path, write_configured_home
@@ -176,6 +176,37 @@ class MainWindow:
             tk.Button(row, text="重试", font=style.FONT_STATUS,
                       command=lambda u=rec.uuid: self._start_conversion(u)
                       ).pack(side="right", padx=4, ipady=8)
+        # 删除按钮：done（含文件丢失）/failed 可删；等待中/转换中不显示（后台线程正在处理，避免竞态）
+        if rec.status in ("done", "failed"):
+            tk.Button(row, text="删除", font=style.FONT_STATUS, fg=style.COLOR_DELETE,
+                      bd=0, activeforeground=style.COLOR_DELETE,
+                      command=lambda r=rec: self._on_delete_record(r)
+                      ).pack(side="right", padx=8, ipady=8)
+
+    def _on_delete_record(self, rec) -> None:
+        """删除本地条目及电脑上的视频/MP3 文件（U 盘内容不动），须二次确认。"""
+        if not messagebox.askyesno(
+            "确认删除",
+            f"确定删除「{rec.title}」吗？\n\n"
+            "电脑上的视频和音乐都会一起删掉。\n"
+            "（U 盘里已经发送的不受影响）",
+            parent=self.root,
+        ):
+            return
+        # 先删文件再删条目：文件删不掉（被播放器占用等）就中止，避免留下无记录的孤儿文件
+        for p in (rec.video_path, rec.mp3_path):
+            if not p:
+                continue
+            try:
+                Path(p).unlink(missing_ok=True)
+            except OSError:
+                logger.warning("[delete] 文件删除失败: %s", p)
+                messagebox.showerror(
+                    "出错了", "这个文件正在被别的程序使用，删不掉。\n"
+                    "请关闭正在播放它的窗口，再点一次删除", parent=self.root)
+                return
+        delete_video(self.layout.db_path, rec.uuid)
+        self._refresh_list()
 
     def _play(self, path: str) -> None:
         """调系统播放器，文件不在时给人话提示（os.startfile 对缺失路径直接抛错）。"""

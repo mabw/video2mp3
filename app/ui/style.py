@@ -17,3 +17,4 @@ COLOR_SEND = "#d97706"      # 发送 U 盘（橙）
 COLOR_MANAGE = "#4a5568"    # 整理 U 盘（灰蓝）
 COLOR_DISABLED = "#9aa0a6"  # 已在 U 盘
 COLOR_ROW_ALT = "#f5f7fa"   # 隔行底色
+COLOR_DELETE = "#c0392b"    # 删除（红），主窗口行按钮与 U 盘窗口共用
