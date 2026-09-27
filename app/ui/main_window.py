@@ -217,7 +217,7 @@ class MainWindow:
                 if p.suffix.lower() in (".mp4", ".mov", ".mkv"):
                     uid = intake_file(self.layout, p, source="manual")
                     self.events.put(("convert", uid))
-        except Exception:  # noqa: BLE001 -- 回调边界：任何失败转人话提示
+        except Exception:
             logger.exception("[drop] 拖放处理失败")
             messagebox.showerror("出错了", "这个文件添加失败了，请重试；"
                                  "或把文件复制到收件箱文件夹里", parent=self.root)
