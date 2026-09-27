@@ -35,5 +35,17 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   }
 });
 
+// 已有抖音标签页时立即上报：覆盖两类竞态——SW 冷启动晚于页面加载
+// （complete 事件发在监听器注册之前而丢失）、扩展装到已开着抖音的浏览器
+async function reportIfDouyinOpen() {
+  try {
+    const tabs = await chrome.tabs.query({ url: "*://*.douyin.com/*" });
+    if (tabs.length) setTimeout(reportCookies, REPORT_DELAY_MS);
+  } catch (e) { /* tabs 权限异常时静默：onUpdated 仍会兜底 */ }
+}
+chrome.runtime.onInstalled.addListener(reportIfDouyinOpen);
+// SW 每次被唤醒都扫一遍（顶层执行，任何事件唤醒都会跑）
+reportIfDouyinOpen();
+
 // 扩展图标点一下也立即同步（手动兜底入口）
 chrome.action && chrome.action.onClicked && chrome.action.onClicked.addListener(reportCookies);
