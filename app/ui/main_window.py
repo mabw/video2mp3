@@ -37,6 +37,9 @@ class MainWindow:
         self.root.title("视频管家")
         self.root.geometry("980x720")
         self.root.configure(bg=style.COLOR_BG)
+        # Tk 回调异常不走 sys.excepthook；--windowed 打包下 stderr 为 None，
+        # 默认处理会直接闪退。重定向到日志，保证任何回调异常都留痕不崩。
+        self.root.report_callback_exception = self._on_tk_exception
         try:
             self._icon = tk.PhotoImage(file=str(asset_path("icon.png")))
             self.root.iconphoto(True, self._icon)
@@ -54,6 +57,12 @@ class MainWindow:
         self.root.after(USB_POLL_MS, self._poll_usb)
         self.root.after(0, self._poll_inbox)  # 首轮立即扫（含启动时已在收件箱的文件）
         self._resume_pending()  # 崩溃/强关后卡在等待中/转换中的记录重新入队
+
+    def _on_tk_exception(self, exc, val, tb) -> None:
+        """Tk 回调异常兜底（签名由 Tkinter 约定）：落日志而不是打向 None 的 stderr。"""
+        import traceback
+
+        logger.error("[tk] 回调异常:\n%s", "".join(traceback.format_exception(exc, val, tb)))
 
     # ---------- 界面构建 ----------
 
@@ -272,19 +281,42 @@ class MainWindow:
     # ---------- 交互 ----------
 
     def _on_drop_files(self, files) -> None:
-        """拖放回调（windnd，主线程）：异常必须吞掉转提示，否则整个程序崩。"""
-        try:
-            for f in files:
+        """windnd 回调（Windows 消息处理上下文）：只解码路径并投事件。
+
+        这里不做文件移动/弹窗等任何重活：ctypes 回调里跑 IO 或嵌套模态
+        消息循环都可能崩进程，全部挪到后台线程与 after 事件循环处理。
+        """
+        paths = []
+        for f in files:
+            try:
                 p = Path(f.decode("gbk", errors="replace") if isinstance(f, bytes) else f)
-                if p.suffix.lower() in (".mp4", ".mov", ".mkv"):
+            except Exception:  # 路径解码异常也不能从这里漏出去
+                logger.exception("[drop] 路径解码失败: %r", f)
+                continue
+            if p.suffix.lower() in (".mp4", ".mov", ".mkv"):
+                paths.append(p)
+        if not paths:
+            return
+
+        def work():
+            added: list[str] = []
+            n_failed = 0
+            for p in paths:
+                try:
                     uid = intake_file(self.layout, p, source="manual")
+                except Exception:
+                    logger.exception("[drop] 文件添加失败: %s", p)
+                    n_failed += 1
+                    continue
+                added.append(uid)
+            if added:
+                for uid in added:
                     self.events.put(("convert", uid))
-        except Exception:
-            logger.exception("[drop] 拖放处理失败")
-            messagebox.showerror("出错了", "这个文件添加失败了，请重试；"
-                                 "或把文件复制到收件箱文件夹里", parent=self.root)
-        finally:
-            self._refresh_list()
+                self.events.put(("refresh", None))
+            if n_failed:
+                msg = f"有 {n_failed} 个文件添加失败了。\n请重试，或把文件复制到收件箱文件夹里"
+                self.events.put(("error", msg))
+        threading.Thread(target=work, daemon=True).start()
 
     def _poll_clipboard(self) -> None:
         try:
