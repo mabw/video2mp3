@@ -82,6 +82,25 @@ def _resolve_cookies_args(url: str, cookies_file: Path | None, memo: Path) -> li
     return []  # 裸跑：可能风控失败，UI 提示走微信兜底
 
 
+def _open_douyin_page() -> None:
+    """用 Edge 显式打开抖音页（Windows）：默认浏览器可能是 360/QQ 等套壳，
+    种下的 cookies yt-dlp 读不到；Edge 系统自带且在探测列表首位。
+    Edge 定位/启动失败时退回默认浏览器。
+    """
+    import webbrowser
+
+    if sys.platform == "win32":
+        try:
+            edge_exe = os.path.expandvars(
+                r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe")
+            webbrowser.register("v2m_edge", None, webbrowser.BackgroundBrowser(edge_exe))
+            webbrowser.get("v2m_edge").open("https://www.douyin.com/")
+            return
+        except (OSError, webbrowser.Error):
+            logger.warning("[douyin] 显式打开 Edge 失败，退回默认浏览器", exc_info=True)
+    webbrowser.open("https://www.douyin.com/")
+
+
 def download_video(
     url: str,
     dest_dir: Path,
@@ -118,9 +137,7 @@ def download_video(
                 # cookies 缺失：打开抖音网页种匿名 cookies，轮询等它落盘
                 if status_cb is not None:
                     status_cb("正在打开抖音网页获取访问权限，首次约需一两分钟，请稍候…")
-                import webbrowser
-
-                webbrowser.open("https://www.douyin.com/")
+                _open_douyin_page()
                 memo.unlink(missing_ok=True)  # 清记忆，重探含刚种 cookies 的浏览器
                 for _ in range(COOKIE_POLL_ROUNDS):
                     time.sleep(COOKIE_POLL_INTERVAL_S)

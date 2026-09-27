@@ -197,3 +197,43 @@ def test_download_video_polling_stops_early(monkeypatch, tmp_path):
     assert (path, title) == (mp4, "标题")
     # 首轮解析 1 + 轮询 3 + 第二轮下载前解析 1 = 5 次（跑满会是 8 次）
     assert calls["resolve"] == 5
+
+
+def test_open_douyin_page_uses_edge_on_windows(monkeypatch):
+    """Windows 上显式用 Edge 打开（360 等默认浏览器种的 cookies yt-dlp 读不到）。"""
+    import webbrowser
+
+    from app import douyin
+
+    opened = []
+    monkeypatch.setattr(douyin.sys, "platform", "win32")
+    monkeypatch.setattr(webbrowser, "register", lambda *a, **k: None)
+
+    class FakeBrowser:
+        def open(self, url):
+            opened.append(("edge", url))
+            return True
+
+    monkeypatch.setattr(webbrowser, "get", lambda name: FakeBrowser())
+    monkeypatch.setattr(webbrowser, "open", lambda u: opened.append(("default", u)))
+    douyin._open_douyin_page()
+    assert opened == [("edge", "https://www.douyin.com/")]
+
+
+def test_open_douyin_page_falls_back_on_edge_failure(monkeypatch):
+    """Edge 定位失败时退回默认浏览器，不抛异常。"""
+    import webbrowser
+
+    from app import douyin
+
+    opened = []
+    monkeypatch.setattr(douyin.sys, "platform", "win32")
+    monkeypatch.setattr(webbrowser, "register", lambda *a, **k: None)
+
+    def fake_get(name):
+        raise webbrowser.Error("no edge")
+
+    monkeypatch.setattr(webbrowser, "get", fake_get)
+    monkeypatch.setattr(webbrowser, "open", lambda u: opened.append(u))
+    douyin._open_douyin_page()
+    assert opened == ["https://www.douyin.com/"]
