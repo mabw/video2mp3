@@ -63,8 +63,8 @@ def test_find_browser_exe_prefers_edge(monkeypatch):
 
     monkeypatch.setattr(douyin.os.path, "isfile",
                         lambda p: "msedge" in p)  # 只有 Edge 存在
-    assert douyin._find_browser_exe() is not None
-    assert "msedge" in douyin._find_browser_exe()
+    exe = douyin._find_browser_exe()
+    assert exe is not None and "msedge" in exe
     monkeypatch.setattr(douyin.os.path, "isfile", lambda p: False)
     assert douyin._find_browser_exe() is None
 
@@ -148,6 +148,22 @@ def test_wait_cookies_file_detects_refresh(monkeypatch, tmp_path):
     assert douyin._wait_cookies_file(cf) is True
 
 
+def test_wait_cookies_file_reports_progress(monkeypatch, tmp_path):
+    """progress_cb 每 5 秒一轮被调用且秒数递增（最长 120 秒不能全程静默）。"""
+    from app import douyin
+
+    cf = tmp_path / "cookies.txt"
+    cf.write_text("ttwid 1", encoding="utf-8")  # 首轮就在：两轮后即收敛
+    monkeypatch.setattr(douyin.time, "sleep", lambda s: None)
+    clock = {"t": 0.0}
+    monkeypatch.setattr(douyin.time, "monotonic",
+                        lambda: (clock.__setitem__("t", clock["t"] + 30)
+                                 or clock["t"]))
+    seen: list[int] = []
+    assert douyin._wait_cookies_file(cf, progress_cb=seen.append) is True
+    assert seen == [5, 10]  # 每轮报告递增秒数，收敛即停
+
+
 # ---------- 下载主流程 ----------
 
 def _patch_ytdlp(monkeypatch, douyin, outputs):
@@ -224,7 +240,7 @@ def test_download_video_retries_after_cookie_refresh(monkeypatch, tmp_path):
     monkeypatch.setattr(douyin, "_seed_via_temp_browser",
                         lambda ext: actions.append("launched"))
     monkeypatch.setattr(douyin, "_wait_cookies_file",
-                        lambda cf: actions.append("waited") or True)
+                        lambda cf, progress_cb=None: actions.append("waited") or True)
     monkeypatch.setattr(douyin, "_close_temp_browser",
                         lambda: actions.append("closed"))
     hints = []
@@ -233,7 +249,9 @@ def test_download_video_retries_after_cookie_refresh(monkeypatch, tmp_path):
     assert state["n"] == 2                     # 重试了一轮
     # 时序完整：启动实例 → 等到落盘 → 按特征关临时实例
     assert actions == ["launched", "waited", "closed"]
-    assert hints                               # UI 收到状态提示
+    # 提示分阶段推进：获取权限 → 权限拿到、开始下载（全程不静默）
+    assert hints == ["正在自动获取抖音访问权限，可能弹出抖音页面，请稍候…",
+                     "权限已更新，正在下载视频，请稍候…"]
     assert title == "标题"
 
 
@@ -247,7 +265,8 @@ def test_download_video_raises_when_retry_also_fails(monkeypatch, tmp_path):
     exc.stderr = "ERROR: Fresh cookies are needed"
     _patch_ytdlp(monkeypatch, douyin, [exc, exc])
     monkeypatch.setattr(douyin, "_seed_via_temp_browser", lambda ext: None)
-    monkeypatch.setattr(douyin, "_wait_cookies_file", lambda cf: False)
+    monkeypatch.setattr(douyin, "_wait_cookies_file",
+                        lambda cf, progress_cb=None: False)
     monkeypatch.setattr(douyin, "_close_temp_browser", lambda: None)
     with pytest.raises(real_subprocess.CalledProcessError):
         douyin.download_video("https://v.douyin.com/x/", tmp_path)

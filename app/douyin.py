@@ -163,22 +163,27 @@ def _close_temp_browser() -> None:
         logger.warning("[douyin] 关闭临时浏览器失败（不影响下载）: %s", exc)
 
 
-def _wait_cookies_file(cookies_file: Path | None) -> bool:
+def _wait_cookies_file(cookies_file: Path | None, progress_cb=None) -> bool:
     """等待扩展落盘的 cookie 波次收敛（ttwid 出现且内容不再变化）。
 
     全新临时 profile 的页面 JS 会持续多波种 cookie：先基础项，风控关键的
     __ac_signature/web_sign_token 等要跑完页面挑战才出现——固定秒数收尾
     都赌时序（端到端实测 3 秒太早）。改为检测"内容连续两轮不变"即收敛。
     超时但文件确有更新时也返回 True（尽力重试）。
+    progress_cb 每 5 秒收到已等待秒数：最长 120 秒全程无反馈会被当成死机。
     """
     if cookies_file is None:
         return False
     refreshed = False
     last_text = ""
     stable = False
+    waited = 0
     deadline = time.monotonic() + COOKIE_WAIT_S
     while time.monotonic() < deadline:
         time.sleep(5)
+        waited += 5
+        if progress_cb is not None:
+            progress_cb(waited)
         try:
             text = cookies_file.read_text(encoding="utf-8") \
                 if cookies_file.exists() else ""
@@ -233,10 +238,17 @@ def download_video(
                     status_cb("正在自动获取抖音访问权限，可能弹出抖音页面，请稍候…")
                 try:
                     _seed_via_temp_browser(asset_path("extension"))
-                    _wait_cookies_file(cookies_file)
+                    _wait_cookies_file(
+                        cookies_file,
+                        None if status_cb is None else
+                        lambda s: status_cb(f"正在获取抖音访问权限…已等 {s} 秒"),
+                    )
                 finally:
                     # 按特征精确定向关闭：只关临时实例，用户浏览器不受影响
                     _close_temp_browser()
+                if status_cb is not None:
+                    # 阶段切换：第二轮下载可能又是几十秒，文字不换会被当成死机
+                    status_cb("权限已更新，正在下载视频，请稍候…")
                 continue  # 第二轮：扩展刷新了 cookies.txt 就能过
             raise
     if len(lines) < 2:
