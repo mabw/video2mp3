@@ -84,6 +84,8 @@ def test_open_douyin_page_falls_back_to_default(monkeypatch):
 
 def test_wait_cookies_file_detects_refresh(monkeypatch, tmp_path):
     """扩展落盘 = cookies.txt mtime 变新；文件不动则超时 False。"""
+    import os
+
     from app import douyin
 
     cf = tmp_path / "cookies.txt"
@@ -98,7 +100,9 @@ def test_wait_cookies_file_detects_refresh(monkeypatch, tmp_path):
     assert douyin._wait_cookies_file(cf) is False
 
     def refresh_then_sleep(_s):
-        cf.write_text("new", encoding="utf-8")
+        # 显式设置远期 mtime：连续两次写的自然时钟在 Windows 文件系统的
+        # 时间戳粒度内可能无差异（CI 实测踩过），utime 必然可区分
+        os.utime(cf, (2030000000, 2030000000))
 
     monkeypatch.setattr(douyin.time, "sleep", refresh_then_sleep)
     assert douyin._wait_cookies_file(cf) is True
