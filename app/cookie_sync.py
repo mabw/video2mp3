@@ -16,6 +16,8 @@ SYNC_PORT = 18642        # 扩展上报端口（仅绑定 127.0.0.1，不对外�
 # 抖音风控所需的关键 cookie：上报数据至少含其一才落盘，挡掉空数据/垃圾请求
 _REQUIRED_COOKIE_NAMES = ("ttwid", "msToken", "__ac_nonce", "__ac_signature")
 _FAR_FUTURE = "2000000000"  # 永不过期的 expires 占位（Netscape 格式秒级时间戳）
+# 落盘串行锁：扩展一个页面会分多波上报（并发请求），.part 临时名必须互斥使用
+_WRITE_LOCK = threading.Lock()
 
 
 def to_netscape(cookies: list[dict]) -> str:
@@ -32,9 +34,10 @@ def to_netscape(cookies: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def make_sync_server(cookies_file: Path) -> http.server.HTTPServer:
+def make_sync_server(cookies_file: Path, port: int = SYNC_PORT) -> http.server.HTTPServer:
     """构造绑定本机回环的同步服务：POST /cookies 收扩展上报并原子落盘。
 
+    port=0 时由系统随机分配（测试用，避免与正在运行的软件实例抢固定端口）。
     安全校验：只接受 Origin 为 chrome-extension:// 的请求——浏览器强制网页
     无法伪造 Origin 头，因此任意网页都写不进来，只有装了扩展的浏览器可以。
     """
@@ -52,9 +55,10 @@ def make_sync_server(cookies_file: Path) -> http.server.HTTPServer:
                     self.send_response(422)  # 没有关键 cookie：不落盘
                     self.end_headers()
                     return
-                tmp = cookies_file.with_suffix(".txt.part")
-                tmp.write_text(to_netscape(cookies), encoding="utf-8")
-                tmp.replace(cookies_file)
+                with _WRITE_LOCK:
+                    tmp = cookies_file.with_name(cookies_file.name + ".part")
+                    tmp.write_text(to_netscape(cookies), encoding="utf-8")
+                    tmp.replace(cookies_file)
                 logger.info("[cookie_sync] 收到扩展上报 %d 条 cookie，已落盘", len(cookies))
                 self.send_response(204)
             except (ValueError, OSError, KeyError) as exc:
@@ -65,7 +69,7 @@ def make_sync_server(cookies_file: Path) -> http.server.HTTPServer:
         def log_message(self, format: str, *args) -> None:  # 基类签名约定
             pass  # 静默常规访问日志，失败已单独落日志
 
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", SYNC_PORT), Handler)
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
     return server
 
 

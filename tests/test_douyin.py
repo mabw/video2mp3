@@ -1,5 +1,6 @@
 """抖音：链接提取、yt-dlp 参数构造、cookies 扩展链路与重试。"""
 import subprocess as real_subprocess
+from pathlib import Path
 
 from app.douyin import build_ytdlp_args, extract_douyin_url
 
@@ -38,73 +39,86 @@ def test_build_ytdlp_args_with_cookies(tmp_path):
     assert args[i + 1] == str(cookies)
 
 
-# ---------- 打开抖音页（触发扩展上报） ----------
+# ---------- 临时浏览器实例种 cookie ----------
 
-def test_open_douyin_page_prefers_edge_then_chrome(monkeypatch):
-    """Windows 上 Edge 优先、Chrome 次之；都存在时只用 Edge。"""
-    import webbrowser
-
+def test_find_browser_exe_prefers_edge(monkeypatch):
+    """Edge 自带优先，Chrome 次之；平台路径候选按存在性筛选。"""
     from app import douyin
 
-    opened = []
-    monkeypatch.setattr(douyin.sys, "platform", "win32")
-    monkeypatch.setattr(douyin.os.path, "isfile", lambda p: True)
-    monkeypatch.setattr(webbrowser, "register", lambda *a, **k: None)
-
-    class FakeBrowser:
-        def __init__(self, name):
-            self.name = name
-
-        def open(self, url):
-            opened.append((self.name, url))
-            return True
-
-    monkeypatch.setattr(webbrowser, "get",
-                        lambda name: FakeBrowser(name.replace("v2m_", "")))
-    monkeypatch.setattr(webbrowser, "open", lambda u: opened.append(("default", u)))
-    douyin._open_douyin_page()
-    assert opened == [("edge", "https://www.douyin.com/")]
-
-
-def test_open_douyin_page_falls_back_to_default(monkeypatch):
-    """Edge/Chrome 都不存在（或启动失败）：退回默认浏览器，不抛异常。"""
-    import webbrowser
-
-    from app import douyin
-
-    opened = []
-    monkeypatch.setattr(douyin.sys, "platform", "win32")
+    monkeypatch.setattr(douyin.os.path, "isfile",
+                        lambda p: "msedge" in p)  # 只有 Edge 存在
+    assert douyin._find_browser_exe() is not None
+    assert "msedge" in douyin._find_browser_exe()
     monkeypatch.setattr(douyin.os.path, "isfile", lambda p: False)
+    assert douyin._find_browser_exe() is None
+
+
+def test_seed_via_temp_browser_launches_with_extension(monkeypatch, tmp_path):
+    """临时实例：独立 profile + 内置扩展 + 抖音页，返回可终止的进程。"""
+    import webbrowser
+
+    from app import douyin
+
+    launched = []
+    monkeypatch.setattr(douyin, "_find_browser_exe", lambda: "/fake/msedge")
+    monkeypatch.setattr(douyin.tempfile, "gettempdir", lambda: str(tmp_path))
+
+    class FakeProc:
+        def terminate(self):
+            launched.append("terminated")
+
+    monkeypatch.setattr(douyin.subprocess, "Popen",
+                        lambda args, **k: launched.append(args)
+                        or FakeProc())
+    monkeypatch.setattr(webbrowser, "open",
+                        lambda u: (_ for _ in ()).throw(
+                            AssertionError("找到浏览器不应退默认")))
+    proc = douyin._seed_via_temp_browser(tmp_path / "extension")
+    assert proc is not None
+    args = launched[0]
+    assert "--user-data-dir" in " ".join(args)
+    assert "--load-extension" in " ".join(args)
+    assert "https://www.douyin.com/" in args
+
+
+def test_seed_via_temp_browser_falls_back(monkeypatch):
+    """找不到浏览器：退回默认浏览器打开（提示装扩展的路径），返回 None。"""
+    import webbrowser
+
+    from app import douyin
+
+    opened = []
+    monkeypatch.setattr(douyin, "_find_browser_exe", lambda: None)
     monkeypatch.setattr(webbrowser, "open", lambda u: opened.append(u))
-    douyin._open_douyin_page()
+    assert douyin._seed_via_temp_browser(Path("/no/such/ext")) is None
     assert opened == ["https://www.douyin.com/"]
 
 
 # ---------- 等待扩展落盘 ----------
 
 def test_wait_cookies_file_detects_refresh(monkeypatch, tmp_path):
-    """扩展落盘 = cookies.txt mtime 变新；文件不动则超时 False。"""
-    import os
-
+    """就绪标准 = ttwid 出现且内容连续两轮不变（页面多波种 cookie 收敛）。"""
     from app import douyin
 
     cf = tmp_path / "cookies.txt"
-    cf.write_text("old", encoding="utf-8")
     monkeypatch.setattr(douyin.time, "sleep", lambda s: None)
     clock = {"t": 0.0}
 
-    # monotonic 快进：模拟等满超时窗口，文件始终未刷新
+    # monotonic 快进：等满超时窗口，文件始终不出现 → False
     monkeypatch.setattr(douyin.time, "monotonic",
                         lambda: (clock.__setitem__("t", clock["t"] + 60)
                                  or clock["t"]))
     assert douyin._wait_cookies_file(cf) is False
 
-    def refresh_then_sleep(_s):
-        # 显式设置远期 mtime：连续两次写的自然时钟在 Windows 文件系统的
-        # 时间戳粒度内可能无差异（CI 实测踩过），utime 必然可区分
-        os.utime(cf, (2030000000, 2030000000))
-
-    monkeypatch.setattr(douyin.time, "sleep", refresh_then_sleep)
+    # 波次模拟：基础 → +ttwid → 再加签名（内容还在变）→ 稳定（重复同内容）
+    waves = iter([
+        lambda: cf.write_text("basic", encoding="utf-8"),
+        lambda: cf.write_text("ttwid 1", encoding="utf-8"),
+        lambda: cf.write_text("ttwid 1; __ac_signature 2", encoding="utf-8"),
+        lambda: None,  # 第四轮不再写入：与上轮相同 → 收敛
+    ])
+    monkeypatch.setattr(douyin.time, "sleep",
+                        lambda s: next(waves, lambda: None)())
     assert douyin._wait_cookies_file(cf) is True
 
 
@@ -171,7 +185,7 @@ def test_download_video_uses_cookies_file_when_present(monkeypatch, tmp_path):
 
 
 def test_download_video_retries_after_cookie_refresh(monkeypatch, tmp_path):
-    """cookie 失效失败 → 自动开抖音页 → 扩展刷新 → 重试成功。"""
+    """cookie 失效失败 → 临时浏览器种 cookie → 文件刷新 → 重试且关掉临时实例。"""
     from app import douyin
 
     mp4 = tmp_path / "abc.mp4"
@@ -181,15 +195,21 @@ def test_download_video_retries_after_cookie_refresh(monkeypatch, tmp_path):
     state = _patch_ytdlp(monkeypatch, douyin,
                          [exc, f"标题\n{mp4}\n"])
     actions = []
-    monkeypatch.setattr(douyin, "_open_douyin_page",
-                        lambda: actions.append("opened"))
+
+    class FakeProc:
+        def terminate(self):
+            actions.append("terminated")
+
+    monkeypatch.setattr(douyin, "_seed_via_temp_browser",
+                        lambda ext: actions.append("launched") or FakeProc())
     monkeypatch.setattr(douyin, "_wait_cookies_file",
                         lambda cf: actions.append("waited") or True)
     hints = []
     _path, title = douyin.download_video("https://v.douyin.com/x/", tmp_path,
                                          status_cb=hints.append)
     assert state["n"] == 2                     # 重试了一轮
-    assert actions == ["opened", "waited"]     # 开页面且等到扩展刷新
+    # 时序完整：启动实例 → 等到落盘 → 只关临时实例
+    assert actions == ["launched", "waited", "terminated"]
     assert hints                               # UI 收到状态提示
     assert title == "标题"
 
@@ -203,7 +223,12 @@ def test_download_video_raises_when_retry_also_fails(monkeypatch, tmp_path):
     exc = real_subprocess.CalledProcessError(1, ["yt-dlp"])
     exc.stderr = "ERROR: Fresh cookies are needed"
     _patch_ytdlp(monkeypatch, douyin, [exc, exc])
-    monkeypatch.setattr(douyin, "_open_douyin_page", lambda: None)
+
+    class FakeProc:
+        def terminate(self):
+            pass
+
+    monkeypatch.setattr(douyin, "_seed_via_temp_browser", lambda ext: FakeProc())
     monkeypatch.setattr(douyin, "_wait_cookies_file", lambda cf: False)
     with pytest.raises(real_subprocess.CalledProcessError):
         douyin.download_video("https://v.douyin.com/x/", tmp_path)
@@ -218,8 +243,8 @@ def test_download_video_no_retry_on_other_errors(monkeypatch, tmp_path):
     exc = real_subprocess.CalledProcessError(1, ["yt-dlp"])
     exc.stderr = "ERROR: Unable to download webpage"
     state = _patch_ytdlp(monkeypatch, douyin, [exc])
-    monkeypatch.setattr(douyin, "_open_douyin_page",
-                        lambda: (_ for _ in ()).throw(
+    monkeypatch.setattr(douyin, "_seed_via_temp_browser",
+                        lambda ext: (_ for _ in ()).throw(
                             AssertionError("非 cookie 错误不应打开浏览器")))
     with pytest.raises(real_subprocess.CalledProcessError):
         douyin.download_video("https://v.douyin.com/x/", tmp_path)

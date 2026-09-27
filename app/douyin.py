@@ -9,10 +9,12 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 from app.convert import find_ytdlp
+from app.paths import asset_path
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +33,12 @@ _BROWSER_CANDIDATES = {
     "edge": [
         r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe",
         r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
     ],
     "chrome": [
         r"%ProgramFiles%\Google\Chrome\Application\chrome.exe",
         r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe",
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     ],
 }
 
@@ -65,43 +69,84 @@ def build_ytdlp_args(url: str, dest_dir: Path, cookies_args: list[str] | None = 
     return args
 
 
-def _open_douyin_page() -> None:
-    """打开抖音首页，触发扩展上报 cookie（Windows 用 Edge/Chrome）。"""
-    import webbrowser
+def _find_browser_exe() -> str | None:
+    """定位可用的 Edge/Chrome 可执行文件（Edge 自带优先）。"""
+    for candidates in _BROWSER_CANDIDATES.values():
+        exe = next((os.path.expandvars(c) for c in candidates
+                    if os.path.isfile(os.path.expandvars(c))), None)
+        if exe is not None:
+            return exe
+    return None
 
-    if sys.platform == "win32":
-        for name, candidates in _BROWSER_CANDIDATES.items():
-            exe = next((os.path.expandvars(c) for c in candidates
-                        if os.path.isfile(os.path.expandvars(c))), None)
-            if exe is None:
-                continue
-            try:
-                webbrowser.register(f"v2m_{name}", None,
-                                    webbrowser.BackgroundBrowser(exe))
-                webbrowser.get(f"v2m_{name}").open("https://www.douyin.com/")
-                return
-            except (OSError, webbrowser.Error):
-                logger.warning("[douyin] 用 %s 打开抖音页失败（%s）", name, exe,
-                               exc_info=True)
-        logger.warning("[douyin] 未找到 Edge/Chrome，退回默认浏览器")
-    webbrowser.open("https://www.douyin.com/")
+
+def _seed_via_temp_browser(ext_dir: Path) -> subprocess.Popen | None:
+    """启动临时浏览器实例（独立 profile + 内置扩展）访问抖音，返回进程。
+
+    免安装路线：不碰用户浏览器 profile，不要求装扩展——软件自带扩展目录，
+    --load-extension 挂到临时实例上；cookie 由扩展上报本地服务落盘。
+    用完由调用方 terminate() 精确关闭，绝不影响用户自己开着的浏览器。
+    """
+    exe = _find_browser_exe()
+    if exe is None:
+        logger.warning("[douyin] 未找到 Edge/Chrome，退回默认浏览器（需手动装扩展）")
+        import webbrowser
+
+        webbrowser.open("https://www.douyin.com/")
+        return None
+    profile = Path(tempfile.gettempdir()) / "v2m_browser_profile"  # 固定目录可复用
+    profile.mkdir(exist_ok=True)
+    try:
+        proc = subprocess.Popen(
+            [exe,
+             f"--user-data-dir={profile}",
+             f"--load-extension={ext_dir}",
+             "--no-first-run", "--no-default-browser-check",
+             "https://www.douyin.com/"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=_NO_WINDOW,
+        )
+        return proc
+    except OSError:
+        logger.warning("[douyin] 启动临时浏览器失败（%s），退回默认浏览器", exe,
+                       exc_info=True)
+        import webbrowser
+
+        webbrowser.open("https://www.douyin.com/")
+        return None
 
 
 def _wait_cookies_file(cookies_file: Path | None) -> bool:
-    """等待扩展刷新 cookies.txt（mtime 变新即成功）。超时返回 False。"""
+    """等待扩展落盘的 cookie 波次收敛（ttwid 出现且内容不再变化）。
+
+    全新临时 profile 的页面 JS 会持续多波种 cookie：先基础项，风控关键的
+    __ac_signature/web_sign_token 等要跑完页面挑战才出现——固定秒数收尾
+    都赌时序（端到端实测 3 秒太早）。改为检测"内容连续两轮不变"即收敛。
+    超时但文件确有更新时也返回 True（尽力重试）。
+    """
     if cookies_file is None:
         return False
-    mtime0 = cookies_file.stat().st_mtime if cookies_file.exists() else 0.0
+    refreshed = False
+    last_text = ""
+    stable = False
     deadline = time.monotonic() + COOKIE_WAIT_S
     while time.monotonic() < deadline:
         time.sleep(5)
         try:
-            if cookies_file.exists() and cookies_file.stat().st_mtime > mtime0:
-                logger.info("[douyin] 扩展已刷新 %s", cookies_file)
-                return True
+            text = cookies_file.read_text(encoding="utf-8") \
+                if cookies_file.exists() else ""
         except OSError:  # 恰好读到 .part 替换的空档：下一轮再看
             continue
-    return False
+        if not text:
+            continue
+        refreshed = True
+        if "ttwid" in text:
+            if text == last_text:
+                stable = True
+                break
+            last_text = text  # 还在变：页面仍在种新 cookie，继续等
+    if stable:
+        logger.info("[douyin] cookie 波次已收敛（ttwid 在且内容稳定）")
+    return refreshed
 
 
 def download_video(
@@ -137,8 +182,13 @@ def download_video(
             if attempt == 0 and "cookie" in stderr.lower():
                 if status_cb is not None:
                     status_cb("正在自动获取抖音访问权限，可能弹出抖音页面，请稍候…")
-                _open_douyin_page()
-                _wait_cookies_file(cookies_file)
+                proc = _seed_via_temp_browser(asset_path("extension"))
+                try:
+                    _wait_cookies_file(cookies_file)
+                finally:
+                    if proc is not None:
+                        # 只关我们自己启动的临时实例，不碰用户开着的浏览器
+                        proc.terminate()
                 continue  # 第二轮：扩展刷新了 cookies.txt 就能过
             raise
     if len(lines) < 2:
